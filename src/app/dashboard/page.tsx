@@ -1,27 +1,26 @@
 import Link from "next/link";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
+import type { Schema } from "@/lib/database.types";
+import SchemaCard from "@/components/SchemaCard";
 
-const placeholderSchemas = [
-  {
-    id: "1",
-    name: "Product — Summer Collection Tee",
-    type: "Product",
-    updatedAt: "2025-01-15",
-  },
-  {
-    id: "2",
-    name: "FAQ — Shipping & Returns",
-    type: "FAQPage",
-    updatedAt: "2025-01-12",
-  },
-  {
-    id: "3",
-    name: "Breadcrumb — Category Nav",
-    type: "BreadcrumbList",
-    updatedAt: "2025-01-10",
-  },
-];
+async function getSchemas(): Promise<Schema[]> {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("schemas")
+      .select("*")
+      .order("updated_at", { ascending: false });
 
-export default function DashboardPage() {
+    if (error) return [];
+    return (data ?? []) as Schema[];
+  } catch {
+    return [];
+  }
+}
+
+export default async function DashboardPage() {
+  const schemas = await getSchemas();
+
   return (
     <div>
       <div className="mb-8 flex items-center justify-between">
@@ -39,30 +38,24 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {placeholderSchemas.map((schema) => (
-          <Link
-            key={schema.id}
-            href={`/editor?id=${schema.id}`}
-            className="group rounded-xl border border-zinc-800 bg-zinc-900 p-5 transition-colors hover:border-zinc-700"
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <span className="rounded-md bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-300">
-                {schema.type}
-              </span>
-              <span className="text-xs text-zinc-500">{schema.updatedAt}</span>
-            </div>
-            <h2 className="text-sm font-semibold text-white group-hover:text-indigo-400">
-              {schema.name}
-            </h2>
-          </Link>
-        ))}
-      </div>
-
-      {placeholderSchemas.length === 0 && (
+      {schemas.length > 0 ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {schemas.map((schema) => (
+            <SchemaCard key={schema.id} schema={schema} />
+          ))}
+        </div>
+      ) : (
         <div className="rounded-xl border border-dashed border-zinc-800 p-12 text-center">
           <p className="text-zinc-500">
-            No schemas yet. Create your first one to get started.
+            No schemas yet.{" "}
+            <Link href="/editor" className="text-indigo-400 hover:underline">
+              Create your first one
+            </Link>{" "}
+            or{" "}
+            <Link href="/validator" className="text-indigo-400 hover:underline">
+              scan a URL
+            </Link>{" "}
+            to get started.
           </p>
         </div>
       )}
