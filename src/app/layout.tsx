@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import Navbar from "@/components/Navbar";
+import AuthProvider from "@/components/AuthProvider";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -21,8 +22,10 @@ export default function RootLayout({
       <body
         className={`${inter.className} min-h-screen bg-zinc-950 text-zinc-100 antialiased`}
       >
-        <Navbar />
-        <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
+        <AuthProvider>
+          <Navbar />
+          <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
+        </AuthProvider>
       </body>
     </html>
   );
