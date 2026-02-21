@@ -41,8 +41,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  // Redirect unauthenticated users to login for all protected routes
-  if (!user && pathname !== "/login") {
+  // Redirect unauthenticated users to login for all protected routes.
+  // /auth/callback must be excluded — it's the magic link landing route that
+  // exchanges the one-time code for a session before the user is "logged in".
+  if (!user && pathname !== "/login" && !pathname.startsWith("/auth/")) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
