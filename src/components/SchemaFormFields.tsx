@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -882,6 +882,44 @@ function renderFormFields(
   }
 }
 
+// ─── Known Field Keys Per Type ───────────────────────────────────────────────
+// Used to merge unknown fields from the original schema back into built JSON,
+// so properties like `foundingLocation` that aren't in our form are preserved.
+
+const KNOWN_TOP_LEVEL_KEYS: Record<string, string[]> = {
+  WebSite:        ["@context", "@type", "name", "url", "potentialAction"],
+  Organization:   ["@context", "@type", "name", "url", "logo", "description", "telephone", "email", "sameAs", "contactPoint", "address", "founder", "foundingDate"],
+  Article:        ["@context", "@type", "headline", "author", "datePublished", "dateModified", "image", "publisher", "articleBody", "wordCount"],
+  BlogPosting:    ["@context", "@type", "headline", "author", "datePublished", "dateModified", "image", "publisher", "articleBody", "wordCount"],
+  Review:         ["@context", "@type", "author", "reviewRating", "reviewBody", "datePublished"],
+  Event:          ["@context", "@type", "name", "startDate", "endDate", "location"],
+  Product:        ["@context", "@type", "name", "description", "image", "url", "sku", "color", "material", "brand", "offers", "aggregateRating", "review", "gtin", "gtin8", "gtin12", "gtin13", "gtin14", "mpn", "weight"],
+  LocalBusiness:  ["@context", "@type", "name", "url", "telephone", "image", "priceRange", "address", "openingHoursSpecification", "geo", "servesCuisine", "menu"],
+  FAQPage:        ["@context", "@type", "mainEntity"],
+  BreadcrumbList: ["@context", "@type", "itemListElement"],
+};
+
+/**
+ * Merge unknown fields from the original scanned schema back into the
+ * builder output so properties not in our form (e.g. foundingLocation,
+ * custom extensions) are preserved in the JSON-LD pane.
+ * Known fields from the builder always win (they reflect the form state).
+ */
+function mergeUnknownFields(
+  built: Record<string, unknown>,
+  original: Record<string, unknown> | null | undefined,
+  schemaType: string
+): Record<string, unknown> {
+  if (!original) return built;
+  const known = new Set(KNOWN_TOP_LEVEL_KEYS[schemaType] ?? []);
+  const extras: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(original)) {
+    if (!known.has(key)) extras[key] = value;
+  }
+  // extras go at the end; built fields (from form) take priority
+  return { ...extras, ...built };
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 interface SchemaFormFieldsProps {
@@ -890,25 +928,105 @@ interface SchemaFormFieldsProps {
   initialValue?: Record<string, unknown> | null;
 }
 
+// Derive the list of unknown top-level fields from an original schema object
+function getUnknownFields(
+  original: Record<string, unknown> | null | undefined,
+  schemaType: string
+): Array<{ key: string; value: unknown }> {
+  if (!original) return [];
+  const known = new Set([
+    ...(KNOWN_TOP_LEVEL_KEYS[schemaType] ?? []),
+    "@context",
+    "@type",
+    "@id",
+    "@graph",
+  ]);
+  return Object.entries(original)
+    .filter(([key]) => !known.has(key))
+    .map(([key, value]) => ({ key, value }));
+}
+
+function formatUnknownValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value, null, 2);
+}
+
 export default function SchemaFormFields({ schemaType, onChange, initialValue }: SchemaFormFieldsProps) {
   const [formState, setFormState] = useState<SchemaFormState>(() => getDefaultFormState(schemaType));
 
-  // Hydrate from initialValue when a saved schema is loaded
+  // Track the original loaded value so unknown fields can be merged back in
+  const initialValueRef = useRef<Record<string, unknown> | null | undefined>(initialValue);
+
+  // Hydrate from initialValue when a saved schema is loaded.
+  // We DON'T fire onChange here — the parent's load effect already set the
+  // full original JSON in the textarea. We just populate the form fields.
+  const hydratedRef = useRef(false);
   useEffect(() => {
     if (!initialValue) return;
+    initialValueRef.current = initialValue;
     const hydrated = hydrateFormState(schemaType, initialValue);
-    if (hydrated) setFormState(hydrated);
+    if (hydrated) {
+      hydratedRef.current = true;
+      setFormState(hydrated);
+    }
   }, [initialValue, schemaType]);
 
-  // Fire onChange whenever form state changes
+  // Fire onChange whenever form state changes — but skip the very first fire
+  // that results from the hydration above (parent already has the full JSON).
+  const isFirstHydratedRender = useRef(false);
   const stableOnChange = useCallback(onChange, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    stableOnChange(buildJson(formState));
-  }, [formState, stableOnChange]);
+    // If this render was triggered by hydration, skip once then clear the flag
+    if (hydratedRef.current) {
+      hydratedRef.current = false;
+      isFirstHydratedRender.current = true;
+      return;
+    }
+    // Merge unknown fields from original back into builder output
+    const built = buildJson(formState);
+    const merged = mergeUnknownFields(built, initialValueRef.current, schemaType);
+    stableOnChange(merged);
+  }, [formState, stableOnChange, schemaType]);
+
+  // Compute unknown fields from the original scanned schema
+  const unknownFields = getUnknownFields(initialValueRef.current, schemaType);
 
   return (
     <div className="mt-4">
       {renderFormFields(formState, setFormState)}
+
+      {/* Unknown fields from scanned schema — read-only with warning */}
+      {unknownFields.length > 0 && (
+        <div className="mt-5 border-t border-zinc-800 pt-4">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+              Unrecognised fields from scan
+            </span>
+            <span className="rounded-full bg-amber-900/50 px-2 py-0.5 text-xs font-medium text-amber-300">
+              {unknownFields.length} unsupported
+            </span>
+          </div>
+          <p className="mb-3 text-xs text-zinc-500">
+            These fields are not part of the standard {schemaType} schema and may cause validation errors.
+            They are preserved in the JSON-LD output as-is.
+          </p>
+          <div className="flex flex-col gap-2">
+            {unknownFields.map(({ key, value }) => (
+              <div key={key} className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-2">
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0 rounded bg-amber-900/60 px-1.5 py-0.5 text-xs font-mono text-amber-300">
+                    {key}
+                  </span>
+                  <span className="break-all font-mono text-xs text-zinc-400">
+                    {formatUnknownValue(value)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

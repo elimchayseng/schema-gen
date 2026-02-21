@@ -490,17 +490,27 @@ function EditorContent() {
           />
 
           <label className="mb-1 block text-sm text-zinc-300">Schema Type</label>
-          <select
-            value={schemaType}
-            onChange={(e) => handleTypeChange(e.target.value)}
-            className="mb-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
-          >
-            {schemaTypes.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
+          {loadedSchema?.source_url ? (
+            // Lock type for schemas imported from a URL scan
+            <div className="mb-1 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2">
+              <span className="flex-1 text-sm text-white">{schemaType}</span>
+              <span className="shrink-0 rounded bg-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
+                locked — from scan
+              </span>
+            </div>
+          ) : (
+            <select
+              value={schemaType}
+              onChange={(e) => handleTypeChange(e.target.value)}
+              className="mb-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {schemaTypes.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          )}
 
           {/* Form fields — primary input method; remounts on type change via key */}
           <SchemaFormFields
