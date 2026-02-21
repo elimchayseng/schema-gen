@@ -7,6 +7,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { validateSchemaString } from "@/lib/validation";
 import type { ValidationIssue, ValidationResult } from "@/lib/validation/types";
 import type { Schema } from "@/lib/database.types";
+import SchemaFormFields from "@/components/SchemaFormFields";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -254,19 +255,15 @@ function EditorContent() {
     };
   }, [jsonOutput]);
 
-  // Update JSON template when schema type changes (only if user hasn't loaded an existing schema)
-  const handleTypeChange = useCallback(
-    (newType: string) => {
-      setSchemaType(newType);
-      if (!loadedSchema) {
-        const template = defaultSchemas[newType];
-        if (template) {
-          setJsonOutput(JSON.stringify(template, null, 2));
-        }
-      }
-    },
-    [loadedSchema]
-  );
+  // Callback for SchemaFormFields — updates the JSON textarea whenever the form changes
+  const handleFormChange = useCallback((json: Record<string, unknown>) => {
+    setJsonOutput(JSON.stringify(json, null, 2));
+  }, []);
+
+  // Update schema type — form remounts via key={schemaType} and drives the new JSON output
+  const handleTypeChange = useCallback((newType: string) => {
+    setSchemaType(newType);
+  }, []);
 
   async function handleSave() {
     if (!schemaName.trim()) {
@@ -496,7 +493,7 @@ function EditorContent() {
           <select
             value={schemaType}
             onChange={(e) => handleTypeChange(e.target.value)}
-            className="mb-5 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            className="mb-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
           >
             {schemaTypes.map((t) => (
               <option key={t} value={t}>
@@ -504,6 +501,14 @@ function EditorContent() {
               </option>
             ))}
           </select>
+
+          {/* Form fields — primary input method; remounts on type change via key */}
+          <SchemaFormFields
+            key={schemaType}
+            schemaType={schemaType}
+            onChange={handleFormChange}
+            initialValue={loadedSchema?.content ?? null}
+          />
 
           {/* Saved validation errors from scan */}
           {loadedSchema?.validation_errors && loadedSchema.validation_errors.length > 0 && (
@@ -551,6 +556,7 @@ function EditorContent() {
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
               JSON-LD Output
+              <span className="ml-2 text-xs font-normal normal-case tracking-normal text-zinc-600">(editable)</span>
             </h2>
             <button
               onClick={handleCopy}
