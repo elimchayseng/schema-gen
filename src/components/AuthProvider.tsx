@@ -34,21 +34,11 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const supabase = createBrowserClient();
 
-    // Get the existing session, or create an anonymous one if none exists
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session) {
-        setSession(session);
-        setUser(session.user);
-        setLoading(false);
-      } else {
-        // No session — sign in anonymously so every visitor has a user_id
-        const { data, error } = await supabase.auth.signInAnonymously();
-        if (!error && data.session) {
-          setSession(data.session);
-          setUser(data.user);
-        }
-        setLoading(false);
-      }
+    // Get the existing session (set by middleware token refresh)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      setLoading(false);
     });
 
     // Keep state in sync across tabs / token refreshes

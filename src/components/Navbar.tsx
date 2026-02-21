@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
+import { createBrowserClient } from "@/lib/supabase";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -11,6 +13,14 @@ const navItems = [
 
 export default function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user } = useAuth();
+
+  async function handleSignOut() {
+    const supabase = createBrowserClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
 
   return (
     <nav className="border-b border-zinc-800 bg-zinc-950">
@@ -37,6 +47,20 @@ export default function Navbar() {
             );
           })}
         </div>
+
+        {user && (
+          <div className="flex items-center gap-3">
+            <span className="max-w-[160px] truncate text-xs text-zinc-400">
+              {user.email}
+            </span>
+            <button
+              onClick={handleSignOut}
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-white"
+            >
+              Sign Out
+            </button>
+          </div>
+        )}
       </div>
     </nav>
   );
