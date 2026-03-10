@@ -9,6 +9,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/editor", label: "Schema Editor" },
   { href: "/validator", label: "URL Validator" },
+  { href: "/generator", label: "Generator" },
 ];
 
 export default function Navbar() {
