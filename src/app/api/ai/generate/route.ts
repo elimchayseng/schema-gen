@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { fetchPage } from "@/lib/url-validator/fetcher";
 import { generateSchemas } from "@/lib/ai/client";
 import { fixAndValidateAIOutput } from "@/lib/validation/integration";
@@ -10,6 +11,16 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  // Auth check
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -55,13 +66,38 @@ export async function POST(request: Request) {
   // Fix and validate each recommendation's jsonld
   const validatedRecommendations: ValidatedRecommendation[] =
     result.recommendations.map((rec) => {
-      const fixResult = fixAndValidateAIOutput(JSON.stringify(rec.jsonld));
-      return {
-        ...rec,
-        jsonld: fixResult.fixed,
-        validation: fixResult.validationAfter,
-        fixes: fixResult.fixes,
-      };
+      try {
+        const fixResult = fixAndValidateAIOutput(JSON.stringify(rec.jsonld));
+        return {
+          ...rec,
+          jsonld: fixResult.fixed,
+          validation: fixResult.validationAfter,
+          fixes: fixResult.fixes,
+        };
+      } catch {
+        return {
+          ...rec,
+          validation: {
+            valid: false,
+            errors: [
+              {
+                severity: "error" as const,
+                path: "",
+                message: "Auto-fix failed for this recommendation",
+                code: "FIX_ERROR",
+              },
+            ],
+            warnings: [],
+            summary: {
+              errorCount: 1,
+              warningCount: 0,
+              schemaType: rec.type,
+              validationTimeMs: 0,
+            },
+          },
+          fixes: [],
+        };
+      }
     });
 
   // Rebuild mergedJsonld from fixed recommendations

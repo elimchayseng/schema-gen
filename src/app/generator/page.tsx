@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { GenerateResponse, ValidatedRecommendation } from "@/lib/ai/types";
 import type { ValidationResult, FixApplied } from "@/lib/validation/types";
 import IssueRow from "@/components/IssueRow";
@@ -100,9 +100,9 @@ function RecommendationCard({
   }
 
   async function handleCopy() {
-    await copyJsonLdScript(jsonText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    const ok = await copyJsonLdScript(jsonText);
+    setCopied(ok);
+    if (ok) setTimeout(() => setCopied(false), 2000);
   }
 
   return (
@@ -236,6 +236,12 @@ export default function GeneratorPage() {
 
   // Debounced live validation
   const [debounceTimers] = useState<Map<number, NodeJS.Timeout>>(new Map());
+
+  useEffect(() => {
+    return () => {
+      for (const t of debounceTimers.values()) clearTimeout(t);
+    };
+  }, [debounceTimers]);
 
   const handleJsonChange = useCallback(
     (index: number, value: string) => {
@@ -377,9 +383,9 @@ export default function GeneratorPage() {
       return rec.jsonld;
     });
 
-    await copyMergedJsonLdScript(jsonlds);
-    setCopiedAll(true);
-    setTimeout(() => setCopiedAll(false), 2000);
+    const ok = await copyMergedJsonLdScript(jsonlds);
+    setCopiedAll(ok);
+    if (ok) setTimeout(() => setCopiedAll(false), 2000);
   }
 
   // Sort recommendations by priority
@@ -450,6 +456,16 @@ export default function GeneratorPage() {
               {results.recommendations.length !== 1 ? "s" : ""} recommended
             </span>
           </div>
+
+          {/* Empty state */}
+          {sortedRecs.length === 0 && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-8 text-center">
+              <p className="text-sm text-zinc-400">
+                No schema recommendations found for this page. Try a different URL
+                or a page with more structured content.
+              </p>
+            </div>
+          )}
 
           {/* Recommendation cards */}
           {sortedRecs.length > 0 && (

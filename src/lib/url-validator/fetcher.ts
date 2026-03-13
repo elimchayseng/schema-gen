@@ -5,7 +5,66 @@ const TIMEOUT_MS = 10_000;
 const USER_AGENT =
   "Mozilla/5.0 (compatible; SchemaGen/1.0; +https://schemagen.app)";
 
+/**
+ * Returns true if the hostname resolves to a private/reserved IP range.
+ */
+export function isPrivateHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+
+  // Block well-known private hostnames
+  if (
+    lower === "localhost" ||
+    lower.endsWith(".local") ||
+    lower === "0.0.0.0" ||
+    lower === "::1" ||
+    lower === "[::1]"
+  ) {
+    return true;
+  }
+
+  // Check IPv4 private ranges
+  const ipv4Match = lower.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [, a, b, c] = ipv4Match.map(Number);
+    // 127.0.0.0/8
+    if (a === 127) return true;
+    // 10.0.0.0/8
+    if (a === 10) return true;
+    // 172.16.0.0/12
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    // 192.168.0.0/16
+    if (a === 192 && b === 168) return true;
+    // 169.254.0.0/16 (link-local)
+    if (a === 169 && b === 254) return true;
+    // 0.0.0.0/8
+    if (a === 0) return true;
+  }
+
+  return false;
+}
+
 export async function fetchPage(url: string): Promise<FetchResult> {
+  // Validate URL and check for SSRF
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return {
+      html: "",
+      statusCode: 0,
+      finalUrl: url,
+      error: "Invalid URL",
+    };
+  }
+
+  if (isPrivateHostname(parsedUrl.hostname)) {
+    return {
+      html: "",
+      statusCode: 0,
+      finalUrl: url,
+      error: "Private or reserved addresses are not allowed",
+    };
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 

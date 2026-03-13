@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { z } from "zod";
+import { createParser, type EventSourceMessage } from "eventsource-parser";
 import type { GeneratorResult, LLMMessage } from "./types";
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
@@ -132,7 +133,7 @@ const generatorResultSchema = z.object({
 
 // ─── HTML preprocessing ─────────────────────────────────────────────────────
 
-function preprocessHtml(html: string): string {
+export function preprocessHtml(html: string): string {
   const $ = cheerio.load(html);
 
   // Remove elements that add noise without useful schema data
@@ -167,7 +168,7 @@ function preprocessHtml(html: string): string {
 
 // ─── SSE stream reader ──────────────────────────────────────────────────────
 
-async function readSSEStream(
+export async function readSSEStream(
   response: Response,
   requestId: string
 ): Promise<string> {
@@ -178,9 +179,33 @@ async function readSSEStream(
 
   const decoder = new TextDecoder();
   let accumulated = "";
-  let buffer = "";
   let chunkCount = 0;
   let firstRawChunk: string | null = null;
+
+  const parser = createParser({
+    onEvent(event: EventSourceMessage) {
+      if (event.data === "[DONE]") return;
+
+      try {
+        const chunk = JSON.parse(event.data);
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) {
+          accumulated += delta;
+        }
+        if (chunk.error) {
+          log("error", "SSE stream contained error", {
+            requestId,
+            error: JSON.stringify(chunk.error).slice(0, 500),
+          });
+        }
+      } catch {
+        log("debug", "Skipped malformed SSE chunk", {
+          requestId,
+          chunk: event.data.slice(0, 200),
+        });
+      }
+    },
+  });
 
   try {
     while (true) {
@@ -190,54 +215,11 @@ async function readSSEStream(
       const rawText = decoder.decode(value, { stream: true });
       chunkCount++;
 
-      // Capture the first raw chunk for debugging
       if (chunkCount === 1) {
         firstRawChunk = rawText.slice(0, 500);
       }
 
-      buffer += rawText;
-
-      // Process complete SSE lines
-      const lines = buffer.split("\n");
-      // Keep the last potentially incomplete line in the buffer
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith(":")) continue;
-        // Handle both "data: [DONE]" and "data:[DONE]"
-        if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") continue;
-
-        // Handle both "data: {...}" and "data:{...}"
-        if (trimmed.startsWith("data:")) {
-          const jsonStr = trimmed.slice(5).trimStart();
-          try {
-            const chunk = JSON.parse(jsonStr);
-            const delta = chunk.choices?.[0]?.delta?.content;
-            if (delta) {
-              accumulated += delta;
-            }
-            // Check for error in streamed chunk
-            if (chunk.error) {
-              log("error", "SSE stream contained error", {
-                requestId,
-                error: JSON.stringify(chunk.error).slice(0, 500),
-              });
-            }
-          } catch {
-            log("debug", "Skipped malformed SSE chunk", {
-              requestId,
-              chunk: jsonStr.slice(0, 200),
-            });
-          }
-        } else if (!trimmed.startsWith("event:")) {
-          // Log unexpected non-data, non-event lines for debugging
-          log("debug", "SSE non-data line", {
-            requestId,
-            line: trimmed.slice(0, 200),
-          });
-        }
-      }
+      parser.feed(rawText);
     }
   } finally {
     reader.releaseLock();
@@ -248,7 +230,6 @@ async function readSSEStream(
       requestId,
       totalChunks: chunkCount,
       firstRawChunk,
-      remainingBuffer: buffer.slice(0, 500),
     });
   }
 
@@ -422,7 +403,7 @@ export async function generateSchemas(
         timeoutMs: TIMEOUT_MS,
         elapsedMs: Date.now() - startTime,
       });
-      throw new Error("LLM request timed out after 30 seconds");
+      throw new Error(`LLM request timed out after ${TIMEOUT_MS / 1000} seconds`);
     }
     throw err;
   }
