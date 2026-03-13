@@ -84,7 +84,7 @@ export async function POST(request: Request) {
                 severity: "error" as const,
                 path: "",
                 message: "Auto-fix failed for this recommendation",
-                code: "FIX_ERROR",
+                code: "INVALID_JSON",
               },
             ],
             warnings: [],

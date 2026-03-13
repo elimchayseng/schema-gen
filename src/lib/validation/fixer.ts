@@ -1,7 +1,7 @@
 import { validateSchema } from "./engine";
 import { resolveProperties, resolveInvalidProperties } from "./engine";
 import { schemaDefinitions } from "./schema-definitions";
-import type { FixApplied, FixResult, PropertyDefinition } from "./types";
+import type { FixApplied, FixResult, PropertyDefinition, ValidationResult } from "./types";
 
 /**
  * Auto-fix deterministic validation errors in a JSON-LD schema.
@@ -73,6 +73,21 @@ function fixObject(
   const invalidProps = resolveInvalidProperties(typeName);
   const propMap = new Map(allProps.map((p) => [p.name, p]));
 
+  // Strip unknown properties — not in schema definition and not a known misplaced property
+  for (const key of Object.keys(obj)) {
+    if (key.startsWith("@")) continue;
+    if (propMap.has(key)) continue;
+    if (key in invalidProps) continue;
+
+    const path = joinPath(basePath, key);
+    delete obj[key];
+    fixes.push({
+      path,
+      code: "INVALID_PROPERTY",
+      description: `Removed unknown property '${key}' from ${typeName}`,
+    });
+  }
+
   // Fix misplaced properties — move them to the parent if appropriate
   for (const key of Object.keys(obj)) {
     if (key.startsWith("@")) continue;
@@ -121,6 +136,53 @@ function fixValue(
   current: { obj: Record<string, unknown>; typeName: string }
 ): void {
   if (value === undefined || value === null || value === "") return;
+
+  // Array-to-scalar coercion: property expects URL/Text but LLM gave an array
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    (propDef.valueType === "URL" || propDef.valueType === "Text")
+  ) {
+    const first = value[0];
+    if (typeof first === "string") {
+      container[key] = first;
+      fixes.push({
+        path,
+        code: "INVALID_PROPERTY_TYPE",
+        description: `Unwrapped array to first ${propDef.valueType} value for '${key}'`,
+      });
+      return;
+    }
+  }
+
+  // Array-to-Object unwrap: property expects Object but LLM gave an array
+  if (
+    Array.isArray(value) &&
+    propDef.valueType === "Object"
+  ) {
+    if (value.length === 1 && typeof value[0] === "object" && value[0] !== null) {
+      container[key] = value[0];
+      fixes.push({
+        path,
+        code: "INVALID_PROPERTY_TYPE",
+        description: `Unwrapped single-element array to Object for '${key}'`,
+      });
+      // Continue to process the unwrapped object below
+      fixObjectValue(container, key, value[0], propDef, path, fixes, current);
+      return;
+    }
+    // Multiple items — pick first as best effort
+    if (value.length > 1 && typeof value[0] === "object" && value[0] !== null) {
+      container[key] = value[0];
+      fixes.push({
+        path,
+        code: "INVALID_PROPERTY_TYPE",
+        description: `Unwrapped array to first Object for '${key}' (had ${value.length} items)`,
+      });
+      fixObjectValue(container, key, value[0], propDef, path, fixes, current);
+      return;
+    }
+  }
 
   switch (propDef.valueType) {
     case "Enum":
@@ -219,4 +281,127 @@ function fixArrayValue(
 
 function joinPath(base: string, key: string): string {
   return base === "$" ? key : `${base}.${key}`;
+}
+
+// ─── Context-aware fixes ─────────────────────────────────────────────────────
+
+export interface FixContext {
+  pageUrl?: string;
+}
+
+/**
+ * Extended fix pipeline: runs structural fixes, then applies context-aware
+ * fixes (e.g. auto-filling `url` from page URL), then re-validates.
+ */
+export function fixSchemaWithContext(
+  schema: Record<string, unknown>,
+  context?: FixContext
+): FixResult {
+  const result = fixSchema(schema);
+  const fixed = result.fixed;
+  const fixes = [...result.fixes];
+
+  if (context?.pageUrl) {
+    applyUrlAutoFill(fixed, context.pageUrl, "$", fixes);
+  }
+
+  // Re-validate after context fixes
+  const validationAfter = validateSchema(fixed);
+
+  return {
+    ...result,
+    fixed,
+    fixes,
+    validationAfter,
+  };
+}
+
+/**
+ * Auto-fill missing `url` properties on Product, Article, Offer, etc.
+ */
+function applyUrlAutoFill(
+  obj: Record<string, unknown>,
+  pageUrl: string,
+  basePath: string,
+  fixes: FixApplied[]
+): void {
+  const type = String(obj["@type"] ?? "");
+
+  // Types where `url` should default to the page URL
+  const urlTypes = ["Product", "Article", "BlogPosting", "Organization", "WebSite"];
+  if (urlTypes.includes(type) && !obj["url"]) {
+    obj["url"] = pageUrl;
+    fixes.push({
+      path: joinPath(basePath, "url"),
+      code: "MISSING_RECOMMENDED",
+      description: `Auto-filled 'url' from page URL`,
+    });
+  }
+
+  // Auto-fill url on nested offers
+  if (obj["offers"] && typeof obj["offers"] === "object" && !Array.isArray(obj["offers"])) {
+    const offers = obj["offers"] as Record<string, unknown>;
+    if (String(offers["@type"] ?? "") === "Offer" && !offers["url"]) {
+      offers["url"] = pageUrl;
+      fixes.push({
+        path: joinPath(basePath, "offers.url"),
+        code: "MISSING_RECOMMENDED",
+        description: `Auto-filled 'offers.url' from page URL`,
+      });
+    }
+  }
+}
+
+// ─── Inherited warning filter ────────────────────────────────────────────────
+
+/**
+ * Returns the set of property names defined directly on a type (own properties),
+ * not inherited from Thing or other ancestors.
+ */
+function getOwnPropertyNames(typeName: string): Set<string> {
+  const def = schemaDefinitions[typeName];
+  if (!def) return new Set();
+  return new Set(def.properties.map((p) => p.name));
+}
+
+/**
+ * Filters out MISSING_RECOMMENDED warnings for properties that are only
+ * inherited from Thing (not defined on the type's own properties).
+ * Only filters warnings on nested objects (not root-level schemas).
+ */
+export function filterInheritedWarnings(
+  result: ValidationResult
+): ValidationResult {
+  const filteredWarnings = result.warnings.filter((w) => {
+    if (w.code !== "MISSING_RECOMMENDED") return true;
+
+    // Parse the path to determine the type and property
+    // Paths look like "offers.description", "brand.description", "description"
+    const parts = w.path.split(".");
+    if (parts.length < 2) return true; // Root-level property — keep it
+
+    // The property name is the last segment
+    const propName = parts[parts.length - 1];
+    // We need to figure out the type of the nested object.
+    // The warning message typically contains the type: "... on <Type>"
+    const typeMatch = w.message.match(/on (\w+)/);
+    if (!typeMatch) return true;
+
+    const nestedType = typeMatch[1];
+    const ownProps = getOwnPropertyNames(nestedType);
+
+    // If the property is NOT an own property, it's inherited — filter it out
+    if (!ownProps.has(propName)) return false;
+
+    return true;
+  });
+
+  return {
+    ...result,
+    warnings: filteredWarnings,
+    summary: {
+      ...result.summary,
+      warningCount: filteredWarnings.length,
+    },
+  };
 }

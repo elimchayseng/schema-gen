@@ -7,7 +7,8 @@
  */
 
 import { validateSchema, validateSchemaString } from "./engine";
-import { fixSchema } from "./fixer";
+import { fixSchema, fixSchemaWithContext, filterInheritedWarnings } from "./fixer";
+import type { FixContext } from "./fixer";
 import type { ValidationResult, FixResult } from "./types";
 
 /**
@@ -68,6 +69,54 @@ export function fixAndValidateAIOutput(jsonString: string): FixResult {
   }
 
   return fixSchema(parsed);
+}
+
+/**
+ * Context-aware auto-fix for AI-generated schema output (Box 3).
+ * Runs structural fixes, URL auto-fill, then filters inherited warnings.
+ */
+export function fixAndValidateAIOutputWithContext(
+  jsonString: string,
+  context?: FixContext
+): FixResult {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonString);
+  } catch (e) {
+    const parseError: ValidationResult = {
+      valid: false,
+      errors: [
+        {
+          severity: "error",
+          path: "$",
+          message: `Invalid JSON: ${(e as Error).message}`,
+          code: "INVALID_JSON",
+        },
+      ],
+      warnings: [],
+      summary: {
+        errorCount: 1,
+        warningCount: 0,
+        schemaType: null,
+        validationTimeMs: 0,
+      },
+    };
+    return {
+      original: {},
+      fixed: {},
+      fixes: [],
+      validationBefore: parseError,
+      validationAfter: parseError,
+    };
+  }
+
+  const result = fixSchemaWithContext(parsed, context);
+
+  // Filter inherited warnings for AI output (Box 3 only)
+  return {
+    ...result,
+    validationAfter: filterInheritedWarnings(result.validationAfter),
+  };
 }
 
 /**

@@ -10,6 +10,7 @@ const navItems = [
   { href: "/editor", label: "Schema Editor" },
   { href: "/validator", label: "URL Validator" },
   { href: "/generator", label: "Generator" },
+  { href: "/optimizer", label: "Optimizer" },
 ];
 
 export default function Navbar() {

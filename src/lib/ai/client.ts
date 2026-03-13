@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import { z } from "zod";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import type { GeneratorResult, LLMMessage } from "./types";
+import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,39 @@ const INFERENCE_MODEL = process.env.HEROKU_INFERENCE_MODEL;
 const MAX_HTML_CHARS = 30_000;
 const TIMEOUT_MS = 120_000;
 
+// ─── Build schema requirements block from definitions ────────────────────────
+
+function buildRequirementsBlock(): string {
+  const lines: string[] = [
+    "REQUIRED AND RECOMMENDED FIELDS (you MUST include all REQUIRED fields):",
+    "",
+  ];
+
+  for (const [typeName, def] of Object.entries(schemaDefinitions)) {
+    if (typeName === "Thing") continue; // Skip base type
+
+    // Only include own properties (not inherited from Thing)
+    const ownProps = def.properties;
+    const required = ownProps
+      .filter((p) => p.requirement === "required")
+      .map((p) => p.name);
+    const recommended = ownProps
+      .filter((p) => p.requirement === "recommended")
+      .map((p) => p.name);
+
+    if (required.length === 0 && recommended.length === 0) continue;
+
+    const parts: string[] = [`${typeName}:`];
+    if (required.length > 0) parts.push(`REQUIRED=[${required.join(", ")}]`);
+    if (recommended.length > 0) parts.push(`RECOMMENDED=[${recommended.join(", ")}]`);
+    lines.push(parts.join(" "));
+  }
+
+  return lines.join("\n");
+}
+
+const REQUIREMENTS_BLOCK = buildRequirementsBlock();
+
 // ─── System prompt ──────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are a structured data specialist working inside a schema markup generation tool
@@ -51,8 +85,10 @@ YOUR RESPONSIBILITIES:
 3. Return a separate JSON-LD block for each recommended schema type. Each block
    must be complete and self-contained.
 
-4. Only include properties you can populate with real or strongly inferred data.
-   Do not include empty properties or placeholder values.
+4. You MUST include all REQUIRED properties for each schema type. Extract the data
+   from the page HTML — prices, currency codes, product names, etc. are always present
+   on ecommerce pages. For RECOMMENDED properties, include them if the data is present
+   or strongly inferable. Never include empty or placeholder values.
 
 5. Every property must be valid for its schema.org @type. Never place a property
    on the wrong object type. For example: 'color', 'material', 'sku', and 'brand'
@@ -112,7 +148,9 @@ Product, Offer, Organization, LocalBusiness, WebSite, FAQPage, Question,
 Article, BlogPosting, BreadcrumbList, ListItem, AggregateRating, Review,
 CollectionPage, ItemList, AboutPage, ContactPage, PostalAddress, Brand
 
-Do not recommend schema types outside this list.`;
+Do not recommend schema types outside this list.
+
+${REQUIREMENTS_BLOCK}`;
 
 // ─── Response validation schema ─────────────────────────────────────────────
 
