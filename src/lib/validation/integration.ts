@@ -7,7 +7,8 @@
  */
 
 import { validateSchema, validateSchemaString } from "./engine";
-import type { ValidationResult } from "./types";
+import { fixSchema } from "./fixer";
+import type { ValidationResult, FixResult } from "./types";
 
 /**
  * Pre-deployment gate (PRD Section 9.2).
@@ -27,6 +28,46 @@ export function canDeploy(jsonLd: unknown): {
  */
 export function validateAIOutput(jsonString: string): ValidationResult {
   return validateSchemaString(jsonString);
+}
+
+/**
+ * Auto-fixes deterministic validation errors in AI-generated schema,
+ * then re-validates. Returns the fix result with before/after validation.
+ */
+export function fixAndValidateAIOutput(jsonString: string): FixResult {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonString);
+  } catch (e) {
+    // Unparseable JSON — return FixResult with parse error, no fixes
+    const parseError: ValidationResult = {
+      valid: false,
+      errors: [
+        {
+          severity: "error",
+          path: "$",
+          message: `Invalid JSON: ${(e as Error).message}`,
+          code: "INVALID_JSON",
+        },
+      ],
+      warnings: [],
+      summary: {
+        errorCount: 1,
+        warningCount: 0,
+        schemaType: null,
+        validationTimeMs: 0,
+      },
+    };
+    return {
+      original: {},
+      fixed: {},
+      fixes: [],
+      validationBefore: parseError,
+      validationAfter: parseError,
+    };
+  }
+
+  return fixSchema(parsed);
 }
 
 /**

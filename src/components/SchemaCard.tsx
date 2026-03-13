@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { Schema } from "@/lib/database.types";
+import { copyJsonLdScript } from "@/lib/copy-utils";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", {
@@ -20,12 +21,7 @@ export default function SchemaCard({ schema }: { schema: Schema }) {
   function handleCopy(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    const jsonLd = `<script type="application/ld+json">\n${JSON.stringify(
-      schema.content,
-      null,
-      2
-    )}\n</script>`;
-    navigator.clipboard.writeText(jsonLd).then(() => {
+    copyJsonLdScript(JSON.stringify(schema.content, null, 2)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });

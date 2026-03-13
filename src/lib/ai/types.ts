@@ -1,4 +1,4 @@
-import type { ValidationResult } from "@/lib/validation/types";
+import type { ValidationResult, FixApplied } from "@/lib/validation/types";
 
 /** A single schema recommendation from the LLM */
 export interface SchemaRecommendation {
@@ -29,6 +29,7 @@ export interface GeneratorResult {
 /** A recommendation enriched with validation results for the UI */
 export interface ValidatedRecommendation extends SchemaRecommendation {
   validation: ValidationResult;
+  fixes: FixApplied[];
 }
 
 /** Full API response from /api/ai/generate */

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { fetchPage } from "@/lib/url-validator/fetcher";
 import { generateSchemas } from "@/lib/ai/client";
-import { validateAIOutput } from "@/lib/validation/integration";
+import { fixAndValidateAIOutput } from "@/lib/validation/integration";
 import type { GenerateResponse, ValidatedRecommendation } from "@/lib/ai/types";
 
 const bodySchema = z.object({
@@ -52,17 +52,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  // Validate each recommendation's jsonld
+  // Fix and validate each recommendation's jsonld
   const validatedRecommendations: ValidatedRecommendation[] =
     result.recommendations.map((rec) => {
-      const validation = validateAIOutput(JSON.stringify(rec.jsonld));
-      return { ...rec, validation };
+      const fixResult = fixAndValidateAIOutput(JSON.stringify(rec.jsonld));
+      return {
+        ...rec,
+        jsonld: fixResult.fixed,
+        validation: fixResult.validationAfter,
+        fixes: fixResult.fixes,
+      };
     });
+
+  // Rebuild mergedJsonld from fixed recommendations
+  const mergedJsonld = validatedRecommendations.map((rec) => rec.jsonld);
 
   const response: GenerateResponse = {
     pageType: result.pageType,
     recommendations: validatedRecommendations,
-    mergedJsonld: result.mergedJsonld,
+    mergedJsonld,
     notes: result.notes,
   };
 

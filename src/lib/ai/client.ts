@@ -1,6 +1,22 @@
 import * as cheerio from "cheerio";
 import { z } from "zod";
-import type { GeneratorResult, LLMMessage, LLMResponse } from "./types";
+import type { GeneratorResult, LLMMessage } from "./types";
+
+// ─── Logging ─────────────────────────────────────────────────────────────────
+
+type LogLevel = "debug" | "info" | "warn" | "error";
+
+function log(level: LogLevel, message: string, data?: Record<string, unknown>) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level,
+    component: "ai-client",
+    message,
+    ...data,
+  };
+  const fn = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
+  fn(JSON.stringify(entry));
+}
 
 // ─── Environment ────────────────────────────────────────────────────────────
 
@@ -8,8 +24,8 @@ const INFERENCE_URL = process.env.HEROKU_INFERENCE_URL;
 const INFERENCE_KEY = process.env.HEROKU_INFERENCE_KEY;
 const INFERENCE_MODEL = process.env.HEROKU_INFERENCE_MODEL;
 
-const MAX_HTML_CHARS = 80_000;
-const TIMEOUT_MS = 30_000;
+const MAX_HTML_CHARS = 30_000;
+const TIMEOUT_MS = 120_000;
 
 // ─── System prompt ──────────────────────────────────────────────────────────
 
@@ -118,16 +134,125 @@ const generatorResultSchema = z.object({
 
 function preprocessHtml(html: string): string {
   const $ = cheerio.load(html);
+
+  // Remove elements that add noise without useful schema data
   $("script").remove();
   $("style").remove();
   $("svg").remove();
   $("noscript").remove();
+  $("link").remove();
+  $("meta[name='theme-color']").remove();
+  $("meta[name='viewport']").remove();
+  $("iframe").remove();
+  $("header nav").remove();
+  $("footer").remove();
 
+  // Remove common Shopify boilerplate selectors
+  $("[data-shopify]").remove();
+  $(".shopify-section-header").remove();
+  $(".shopify-section-footer").remove();
+
+  // Remove empty attributes and excessive whitespace
   let text = $.html();
+  // Collapse runs of whitespace
+  text = text.replace(/\s{2,}/g, " ");
+  // Remove HTML comments
+  text = text.replace(/<!--[\s\S]*?-->/g, "");
+
   if (text.length > MAX_HTML_CHARS) {
     text = text.slice(0, MAX_HTML_CHARS);
   }
   return text;
+}
+
+// ─── SSE stream reader ──────────────────────────────────────────────────────
+
+async function readSSEStream(
+  response: Response,
+  requestId: string
+): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Response body is not readable");
+  }
+
+  const decoder = new TextDecoder();
+  let accumulated = "";
+  let buffer = "";
+  let chunkCount = 0;
+  let firstRawChunk: string | null = null;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const rawText = decoder.decode(value, { stream: true });
+      chunkCount++;
+
+      // Capture the first raw chunk for debugging
+      if (chunkCount === 1) {
+        firstRawChunk = rawText.slice(0, 500);
+      }
+
+      buffer += rawText;
+
+      // Process complete SSE lines
+      const lines = buffer.split("\n");
+      // Keep the last potentially incomplete line in the buffer
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(":")) continue;
+        // Handle both "data: [DONE]" and "data:[DONE]"
+        if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") continue;
+
+        // Handle both "data: {...}" and "data:{...}"
+        if (trimmed.startsWith("data:")) {
+          const jsonStr = trimmed.slice(5).trimStart();
+          try {
+            const chunk = JSON.parse(jsonStr);
+            const delta = chunk.choices?.[0]?.delta?.content;
+            if (delta) {
+              accumulated += delta;
+            }
+            // Check for error in streamed chunk
+            if (chunk.error) {
+              log("error", "SSE stream contained error", {
+                requestId,
+                error: JSON.stringify(chunk.error).slice(0, 500),
+              });
+            }
+          } catch {
+            log("debug", "Skipped malformed SSE chunk", {
+              requestId,
+              chunk: jsonStr.slice(0, 200),
+            });
+          }
+        } else if (!trimmed.startsWith("event:")) {
+          // Log unexpected non-data, non-event lines for debugging
+          log("debug", "SSE non-data line", {
+            requestId,
+            line: trimmed.slice(0, 200),
+          });
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (accumulated.length === 0) {
+    log("warn", "SSE stream produced no content", {
+      requestId,
+      totalChunks: chunkCount,
+      firstRawChunk,
+      remainingBuffer: buffer.slice(0, 500),
+    });
+  }
+
+  return accumulated;
 }
 
 // ─── Main generator function ────────────────────────────────────────────────
@@ -142,7 +267,18 @@ export async function generateSchemas(
     );
   }
 
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const startTime = Date.now();
+
   const cleanedHtml = preprocessHtml(html);
+
+  log("info", "Starting schema generation", {
+    requestId,
+    url,
+    rawHtmlLength: html.length,
+    cleanedHtmlLength: cleanedHtml.length,
+    model: INFERENCE_MODEL,
+  });
 
   const messages: LLMMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -152,11 +288,27 @@ export async function generateSchemas(
     },
   ];
 
+  const systemPromptTokenEstimate = Math.ceil(SYSTEM_PROMPT.length / 4);
+  const userContentTokenEstimate = Math.ceil(messages[1].content.length / 4);
+
+  log("debug", "Request payload prepared", {
+    requestId,
+    endpoint: INFERENCE_URL.replace(/\/+$/, "") + "/v1/chat/completions",
+    systemPromptChars: SYSTEM_PROMPT.length,
+    userContentChars: messages[1].content.length,
+    estimatedInputTokens: systemPromptTokenEstimate + userContentTokenEstimate,
+    temperature: 0.2,
+    maxTokens: 8192,
+  });
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const response = await fetch(INFERENCE_URL, {
+    const endpoint = INFERENCE_URL.replace(/\/+$/, "") + "/v1/chat/completions";
+    const fetchStart = Date.now();
+
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -167,45 +319,109 @@ export async function generateSchemas(
         messages,
         temperature: 0.2,
         max_tokens: 8192,
+        stream: true,
       }),
       signal: controller.signal,
     });
 
-    clearTimeout(timer);
+    const fetchDurationMs = Date.now() - fetchStart;
+
+    log("info", "LLM streaming response started", {
+      requestId,
+      status: response.status,
+      statusText: response.statusText,
+      fetchDurationMs,
+      contentType: response.headers.get("content-type"),
+    });
 
     if (!response.ok) {
+      clearTimeout(timer);
       const errorText = await response.text().catch(() => "Unknown error");
+      log("error", "LLM API error response", {
+        requestId,
+        status: response.status,
+        errorBody: errorText.slice(0, 1000),
+      });
       throw new Error(
         `LLM API returned ${response.status}: ${errorText}`
       );
     }
 
-    const llmResponse = (await response.json()) as LLMResponse;
-    const content = llmResponse.choices?.[0]?.message?.content;
+    // Accumulate streamed SSE chunks into full content
+    const content = await readSSEStream(response, requestId);
+    clearTimeout(timer);
+
+    log("info", "LLM streaming complete", {
+      requestId,
+      contentLength: content.length,
+      totalStreamDurationMs: Date.now() - fetchStart,
+      contentPreview: content.slice(0, 200),
+    });
 
     if (!content) {
+      log("error", "LLM returned empty content", { requestId });
       throw new Error("LLM returned an empty response");
+    }
+
+    // Strip markdown code fences if the LLM wrapped the response
+    let jsonContent = content.trim();
+    if (jsonContent.startsWith("```")) {
+      jsonContent = jsonContent
+        .replace(/^```(?:json)?\s*\n?/, "")
+        .replace(/\n?```\s*$/, "");
+      log("warn", "Stripped markdown code fences from LLM response", {
+        requestId,
+      });
     }
 
     // Parse and validate the JSON response
     let parsed: unknown;
     try {
-      parsed = JSON.parse(content);
-    } catch {
+      parsed = JSON.parse(jsonContent);
+    } catch (parseErr) {
+      log("error", "LLM response is not valid JSON", {
+        requestId,
+        parseError: parseErr instanceof Error ? parseErr.message : String(parseErr),
+        contentPreview: jsonContent.slice(0, 500),
+        contentTail: jsonContent.slice(-200),
+        contentLength: jsonContent.length,
+      });
       throw new Error("LLM response is not valid JSON");
     }
 
     const validated = generatorResultSchema.safeParse(parsed);
     if (!validated.success) {
+      log("error", "LLM response failed schema validation", {
+        requestId,
+        zodErrors: validated.error.issues.map((i) => ({
+          path: i.path.join("."),
+          message: i.message,
+          code: i.code,
+        })),
+      });
       throw new Error(
         `LLM response does not match expected schema: ${validated.error.issues[0]?.message ?? "Unknown validation error"}`
       );
     }
 
+    const totalDurationMs = Date.now() - startTime;
+    log("info", "Schema generation complete", {
+      requestId,
+      totalDurationMs,
+      pageType: validated.data.pageType,
+      recommendationCount: validated.data.recommendations.length,
+      noteCount: validated.data.notes.length,
+    });
+
     return validated.data;
   } catch (err: unknown) {
     clearTimeout(timer);
     if (err instanceof Error && err.name === "AbortError") {
+      log("error", "LLM request timed out", {
+        requestId,
+        timeoutMs: TIMEOUT_MS,
+        elapsedMs: Date.now() - startTime,
+      });
       throw new Error("LLM request timed out after 30 seconds");
     }
     throw err;

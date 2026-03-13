@@ -5,9 +5,12 @@ import { Suspense } from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { validateSchemaString } from "@/lib/validation";
-import type { ValidationIssue, ValidationResult } from "@/lib/validation/types";
+import type { ValidationResult } from "@/lib/validation/types";
 import type { Schema } from "@/lib/database.types";
 import SchemaFormFields from "@/components/SchemaFormFields";
+import IssueRow from "@/components/IssueRow";
+import { copyJsonLdScript } from "@/lib/copy-utils";
+import { saveSchema } from "@/lib/save-schema";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -175,27 +178,6 @@ function ValidationPanel({ result }: { result: ValidationResult | null }) {
   );
 }
 
-function IssueRow({ issue }: { issue: ValidationIssue }) {
-  const isError = issue.severity === "error";
-  return (
-    <div
-      className={`flex items-start gap-2 rounded px-2.5 py-1.5 text-xs ${
-        isError
-          ? "bg-red-950/40 text-red-300"
-          : "bg-amber-950/40 text-amber-300"
-      }`}
-    >
-      <span className="mt-0.5 shrink-0 font-bold uppercase">
-        {isError ? "Error" : "Warn"}
-      </span>
-      {issue.path && (
-        <span className="shrink-0 font-mono text-zinc-400">{issue.path}</span>
-      )}
-      <span>{issue.message}</span>
-    </div>
-  );
-}
-
 // ─── Main Page ─────────────────────────────────────────────────────────────
 
 function EditorContent() {
@@ -283,42 +265,30 @@ function EditorContent() {
       return;
     }
 
-    const body: Record<string, unknown> = {
-      name: schemaName,
-      schema_type: schemaType,
-      content,
-      validation_errors: validationResult?.errors ?? [],
-      missing_opportunities: loadedSchema?.missing_opportunities ?? [],
-    };
-
-    if (loadedSchema?.source_url) {
-      body.source_url = loadedSchema.source_url;
-    }
-
-    if (schemaId && loadedSchema) {
-      body.id = schemaId;
-    }
-
     try {
-      const res = await fetch("/api/schemas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      const result = await saveSchema({
+        id: schemaId && loadedSchema ? schemaId : undefined,
+        name: schemaName,
+        schema_type: schemaType,
+        content,
+        source_url: loadedSchema?.source_url ?? undefined,
+        validation_errors: validationResult?.errors ?? [],
+        missing_opportunities: loadedSchema?.missing_opportunities ?? [],
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setSaveMessage(data.error ?? "Save failed");
+      if (!result.ok) {
+        setSaveMessage(result.error ?? "Save failed");
         return;
       }
 
+      const savedSchema = result.schema as Schema | undefined;
+
       // If this was a new schema, redirect to the editor for that id
-      if (!schemaId && data.schema?.id) {
-        router.replace(`/editor?id=${data.schema.id}`);
-        setLoadedSchema(data.schema);
-      } else if (data.schema) {
-        setLoadedSchema(data.schema);
+      if (!schemaId && savedSchema?.id) {
+        router.replace(`/editor?id=${savedSchema.id}`);
+        setLoadedSchema(savedSchema);
+      } else if (savedSchema) {
+        setLoadedSchema(savedSchema);
       }
 
       setSaveMessage("Saved!");
@@ -351,8 +321,7 @@ function EditorContent() {
   }
 
   function handleCopy() {
-    const scriptTag = `<script type="application/ld+json">\n${jsonOutput}\n</script>`;
-    navigator.clipboard.writeText(scriptTag).then(() => {
+    copyJsonLdScript(jsonOutput).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });

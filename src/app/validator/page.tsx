@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { UrlScanResult, SchemaValidationSummary, MissingOpportunity } from "@/lib/url-validator";
-import type { ValidationIssue } from "@/lib/validation/types";
+import IssueRow from "@/components/IssueRow";
+import { saveSchema } from "@/lib/save-schema";
 
 // ─── Status helpers ────────────────────────────────────────────────────────
 
@@ -20,27 +21,6 @@ function statusDot(valid: boolean, errorCount: number) {
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────
-
-function IssueRow({ issue }: { issue: ValidationIssue }) {
-  const isError = issue.severity === "error";
-  return (
-    <div
-      className={`flex items-start gap-2 rounded-md px-3 py-1.5 text-xs ${
-        isError
-          ? "bg-red-950/40 text-red-300"
-          : "bg-amber-950/40 text-amber-300"
-      }`}
-    >
-      <span className="mt-0.5 shrink-0 font-bold uppercase">
-        {isError ? "Error" : "Warn"}
-      </span>
-      {issue.path && (
-        <span className="shrink-0 font-mono text-zinc-400">{issue.path}</span>
-      )}
-      <span>{issue.message}</span>
-    </div>
-  );
-}
 
 function SchemaCard({
   schema,
@@ -238,20 +218,16 @@ export default function ValidatorPage() {
         ? `${schema.schemaType} from ${new URL(results.finalUrl).hostname}`
         : `Schema ${index + 1} from ${new URL(results.finalUrl).hostname}`;
 
-      const res = await fetch("/api/schemas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          schema_type: schema.schemaType ?? "Unknown",
-          content: schema.parsed ?? {},
-          source_url: results.finalUrl,
-          validation_errors: schema.errors,
-          missing_opportunities: results.missingOpportunities,
-        }),
+      const result = await saveSchema({
+        name,
+        schema_type: schema.schemaType ?? "Unknown",
+        content: (schema.parsed ?? {}) as Record<string, unknown>,
+        source_url: results.finalUrl,
+        validation_errors: schema.errors,
+        missing_opportunities: results.missingOpportunities,
       });
 
-      if (res.ok) {
+      if (result.ok) {
         setSavedIndexes((prev) => new Set(prev).add(index));
       }
     } finally {

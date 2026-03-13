@@ -104,6 +104,22 @@ export interface ValidationResult {
 // Page & Workspace Status (PRD Section 6)
 // ============================================================
 
+/** A single fix that was automatically applied to a schema */
+export interface FixApplied {
+  path: string;
+  code: ValidationErrorCode;
+  description: string;
+}
+
+/** Result of running the auto-fix pipeline on a schema */
+export interface FixResult {
+  original: Record<string, unknown>;
+  fixed: Record<string, unknown>;
+  fixes: FixApplied[];
+  validationBefore: ValidationResult;
+  validationAfter: ValidationResult;
+}
+
 export type SchemaStatus = "error" | "warning" | "valid" | "ignored";
 
 export function getStatusFromValidation(

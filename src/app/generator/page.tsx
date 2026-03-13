@@ -2,8 +2,10 @@
 
 import { useState, useCallback } from "react";
 import type { GenerateResponse, ValidatedRecommendation } from "@/lib/ai/types";
-import type { ValidationResult } from "@/lib/validation/types";
-import type { ValidationIssue } from "@/lib/validation/types";
+import type { ValidationResult, FixApplied } from "@/lib/validation/types";
+import IssueRow from "@/components/IssueRow";
+import { copyJsonLdScript, copyMergedJsonLdScript } from "@/lib/copy-utils";
+import { saveSchema } from "@/lib/save-schema";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -39,23 +41,29 @@ function statusText(result: ValidationResult) {
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function IssueRow({ issue }: { issue: ValidationIssue }) {
-  const isError = issue.severity === "error";
+function FixBanner({ fixes }: { fixes: FixApplied[] }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <div
-      className={`flex items-start gap-2 rounded-md px-3 py-1.5 text-xs ${
-        isError
-          ? "bg-red-950/40 text-red-300"
-          : "bg-amber-950/40 text-amber-300"
-      }`}
-    >
-      <span className="mt-0.5 shrink-0 font-bold uppercase">
-        {isError ? "Error" : "Warn"}
-      </span>
-      {issue.path && (
-        <span className="shrink-0 font-mono text-zinc-400">{issue.path}</span>
+    <div className="mb-3 rounded-lg border border-emerald-800/50 bg-emerald-950/30 px-3 py-2">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 text-left text-xs font-medium text-emerald-400"
+      >
+        <span>
+          Auto-fixed {fixes.length} issue{fixes.length > 1 ? "s" : ""}
+        </span>
+        <span className="text-emerald-600">{expanded ? "▾" : "▸"}</span>
+      </button>
+      {expanded && (
+        <ul className="mt-2 flex flex-col gap-1">
+          {fixes.map((fix, i) => (
+            <li key={i} className="text-xs text-emerald-300/80">
+              <span className="font-mono text-zinc-500">{fix.path}</span>{" "}
+              {fix.description}
+            </li>
+          ))}
+        </ul>
       )}
-      <span>{issue.message}</span>
     </div>
   );
 }
@@ -92,8 +100,7 @@ function RecommendationCard({
   }
 
   async function handleCopy() {
-    const script = `<script type="application/ld+json">\n${jsonText}\n</script>`;
-    await navigator.clipboard.writeText(script);
+    await copyJsonLdScript(jsonText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -121,6 +128,11 @@ function RecommendationCard({
 
       {/* Rationale */}
       <p className="mb-3 text-sm text-zinc-400">{rec.rationale}</p>
+
+      {/* Auto-fix banner */}
+      {rec.fixes && rec.fixes.length > 0 && (
+        <FixBanner fixes={rec.fixes} />
+      )}
 
       {/* Editable JSON textarea */}
       <textarea
@@ -331,18 +343,14 @@ export default function GeneratorPage() {
         }
       }
 
-      const res = await fetch("/api/schemas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: `${rec.type} from ${hostname}`,
-          schema_type: rec.type,
-          content,
-          source_url: url.trim(),
-        }),
+      const result = await saveSchema({
+        name: `${rec.type} from ${hostname}`,
+        schema_type: rec.type,
+        content,
+        source_url: url.trim(),
       });
 
-      if (res.ok) {
+      if (result.ok) {
         setSavedIndexes((prev) => new Set(prev).add(index));
       }
     } finally {
@@ -369,15 +377,7 @@ export default function GeneratorPage() {
       return rec.jsonld;
     });
 
-    const merged =
-      jsonlds.length === 1 ? jsonlds[0] : jsonlds;
-    const script = `<script type="application/ld+json">\n${JSON.stringify(
-      merged,
-      null,
-      2
-    )}\n</script>`;
-
-    await navigator.clipboard.writeText(script);
+    await copyMergedJsonLdScript(jsonlds);
     setCopiedAll(true);
     setTimeout(() => setCopiedAll(false), 2000);
   }

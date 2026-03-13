@@ -9,9 +9,12 @@ export {
 
 export { schemaDefinitions } from "./schema-definitions";
 
+export { fixSchema } from "./fixer";
+
 export {
   canDeploy,
   validateAIOutput,
+  fixAndValidateAIOutput,
   validateEditorContent,
   auditCrawledSchema,
   validateBulk,
@@ -29,4 +32,6 @@ export type {
   PropertyValueType,
   SchemaTypeDefinition,
   SchemaStatus,
+  FixApplied,
+  FixResult,
 } from "./types";
