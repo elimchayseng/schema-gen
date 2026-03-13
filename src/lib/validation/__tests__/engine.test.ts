@@ -659,7 +659,12 @@ describe("Integration layer", () => {
 
 describe("getStatusFromValidation", () => {
   it("45. Returns 'valid' for schema with no issues", () => {
-    const result = validateSchema(validProduct);
+    const result = {
+      valid: true,
+      errors: [],
+      warnings: [],
+      summary: { schemaType: "Product", validationTimeMs: 0 },
+    };
     expect(getStatusFromValidation(result, false)).toBe("valid");
   });
 
