@@ -6,6 +6,7 @@ import type { ValidatedRecommendation } from "@/lib/ai/types";
 import SchemaDetail from "./SchemaDetail";
 import { copyJsonLdScript } from "@/lib/copy-utils";
 import { saveSchema } from "@/lib/save-schema";
+import { getRichResultInfo } from "@/lib/validation/rich-results";
 
 interface SchemaRowProps {
   comparison?: SchemaComparison;
@@ -75,6 +76,8 @@ export default function SchemaRow({
     comparison?.generated?.shopifyInstructions ??
     recommendation?.shopifyInstructions ??
     null;
+
+  const richResult = getRichResultInfo(schemaType);
 
   const issueCount = comparison
     ? (() => {
@@ -152,6 +155,14 @@ export default function SchemaRow({
         <span className="rounded-sm bg-surface-3 px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
           {sourceTag}
         </span>
+        {richResult?.eligible && (
+          <span
+            className="rounded-sm bg-valid/10 px-1.5 py-0.5 text-[10px] font-medium text-valid"
+            title={richResult.description}
+          >
+            Rich Result
+          </span>
+        )}
 
         {/* Spacer */}
         <span className="flex-1" />

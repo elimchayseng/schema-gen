@@ -8,6 +8,7 @@ import { generateSchemas } from "@/lib/ai/client";
 import { fixAndValidateAIOutputWithContext } from "@/lib/validation/integration";
 import { fixSchema } from "@/lib/validation/fixer";
 import { validateSchema } from "@/lib/validation/engine";
+import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 import type { ValidatedRecommendation } from "@/lib/ai/types";
 import type { ValidationIssue } from "@/lib/validation/types";
 import type {
@@ -140,9 +141,21 @@ export async function POST(request: Request) {
     llmError = true;
   }
 
-  // Fix and validate LLM output
+  // Fix and validate LLM output (filter unsupported types first)
   const validatedRecs: ValidatedRecommendation[] = [];
   if (llmResult) {
+    // Safety net: strip recommendations with unsupported @type
+    llmResult.recommendations = llmResult.recommendations.filter((rec) => {
+      const type = rec.jsonld?.["@type"];
+      if (typeof type === "string" && !schemaDefinitions[type]) {
+        llmResult!.notes.push(
+          `Filtered unsupported schema type "${type}" from recommendations.`
+        );
+        return false;
+      }
+      return true;
+    });
+
     for (const rec of llmResult.recommendations) {
       try {
         const fixResult = fixAndValidateAIOutputWithContext(

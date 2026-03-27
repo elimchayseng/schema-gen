@@ -663,7 +663,7 @@ describe("getStatusFromValidation", () => {
       valid: true,
       errors: [],
       warnings: [],
-      summary: { schemaType: "Product", validationTimeMs: 0 },
+      summary: { errorCount: 0, warningCount: 0, schemaType: "Product", validationTimeMs: 0 },
     };
     expect(getStatusFromValidation(result, false)).toBe("valid");
   });

@@ -62,6 +62,31 @@ function buildRequirementsBlock(): string {
 
 const REQUIREMENTS_BLOCK = buildRequirementsBlock();
 
+// ─── Build allowed types list from schemaDefinitions ────────────────────────
+
+/** Types that are nested-only and should not be top-level AI recommendations */
+const NESTED_ONLY_TYPES = new Set([
+  "Thing",
+  "Answer",
+  "Rating",
+  "HowToStep",
+  "HowToSection",
+  "HowToDirection",
+  "HowToTip",
+  "ListItem",
+  "PostalAddress",
+  "GeoCoordinates",
+  "SearchAction",
+  "ContactPoint",
+  "OpeningHoursSpecification",
+  "QuantitativeValue",
+]);
+
+/** Top-level schema types the AI may recommend — derived from schemaDefinitions */
+const ALLOWED_TYPES_LIST = Object.keys(schemaDefinitions)
+  .filter((t) => !NESTED_ONLY_TYPES.has(t))
+  .join(", ");
+
 // ─── System prompt ──────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are a structured data specialist working inside a schema markup generation tool
@@ -129,7 +154,7 @@ STRICT OUTPUT RULES:
 OUTPUT STRUCTURE:
 
 {
-  "pageType": "<inferred page type, e.g. product, homepage, blog_post, faq, collection, about, contact>",
+  "pageType": "<inferred page type, e.g. product, homepage, blog_post, faq, collection, about, contact, howto>",
   "recommendations": [
     {
       "type": "<schema.org type name, e.g. Product>",
@@ -144,11 +169,12 @@ OUTPUT STRUCTURE:
 }
 
 SCHEMA TYPES YOU MAY RECOMMEND (use only what is appropriate for the page):
-Product, Offer, Organization, LocalBusiness, WebSite, FAQPage, Question,
-Article, BlogPosting, BreadcrumbList, ListItem, AggregateRating, Review,
-CollectionPage, ItemList, AboutPage, ContactPage, PostalAddress, Brand
+${ALLOWED_TYPES_LIST}
 
-Do not recommend schema types outside this list.
+Do not recommend schema types outside this list. If a type is not in this list,
+do not use it — even if it exists on schema.org. Nested types like HowToStep,
+ListItem, and Answer should only appear inside their parent types, never as
+top-level recommendations.
 
 ${REQUIREMENTS_BLOCK}`;
 

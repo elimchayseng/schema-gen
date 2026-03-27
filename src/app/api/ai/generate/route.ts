@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { fetchPage } from "@/lib/url-validator/fetcher";
 import { generateSchemas } from "@/lib/ai/client";
 import { fixAndValidateAIOutput } from "@/lib/validation/integration";
+import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 import type { GenerateResponse, ValidatedRecommendation } from "@/lib/ai/types";
 
 const bodySchema = z.object({
@@ -63,9 +64,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
+  // Filter out recommendations with unsupported @type (safety net)
+  const filtered = result.recommendations.filter((rec) => {
+    const type = rec.jsonld?.["@type"];
+    if (typeof type === "string" && !schemaDefinitions[type]) {
+      result.notes.push(
+        `Filtered unsupported schema type "${type}" from recommendations.`
+      );
+      return false;
+    }
+    return true;
+  });
+
   // Fix and validate each recommendation's jsonld
   const validatedRecommendations: ValidatedRecommendation[] =
-    result.recommendations.map((rec) => {
+    filtered.map((rec) => {
       try {
         const fixResult = fixAndValidateAIOutput(JSON.stringify(rec.jsonld));
         return {
