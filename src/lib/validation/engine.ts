@@ -26,6 +26,13 @@ export function resolveProperties(typeName: string): PropertyDefinition[] {
   return [...inherited, ...def.properties];
 }
 
+/** Returns the set of property names directly defined on a type (not inherited). */
+function getOwnPropertyNames(typeName: string): Set<string> {
+  const def = schemaDefinitions[typeName];
+  if (!def) return new Set();
+  return new Set(def.properties.map((p) => p.name));
+}
+
 /**
  * Resolves the full invalidProperties map for a type, merging
  * with ancestors.
@@ -169,11 +176,13 @@ function validateObject(
   typeName: string,
   basePath: string,
   errors: ValidationIssue[],
-  warnings: ValidationIssue[]
+  warnings: ValidationIssue[],
+  isNested = false
 ): void {
   const allProps = resolveProperties(typeName);
   const invalidProps = resolveInvalidProperties(typeName);
   const propMap = new Map(allProps.map((p) => [p.name, p]));
+  const ownProps = isNested ? getOwnPropertyNames(typeName) : null;
 
   // --- Check required / recommended presence ---
   for (const propDef of allProps) {
@@ -191,6 +200,11 @@ function validateObject(
         expectedValue: propDef.valueType,
       });
     } else if (propDef.requirement === "recommended" && missing) {
+      // Skip inherited recommended properties on nested objects (e.g. description
+      // inherited from Thing on HowToStep — noisy and not actionable)
+      if (isNested && ownProps && !ownProps.has(propDef.name)) {
+        continue;
+      }
       warnings.push({
         severity: "warning",
         path,
@@ -567,7 +581,7 @@ function validateNestedObject(
 
   // Recursively validate the nested object if we have definitions
   if (schemaDefinitions[nestedType]) {
-    validateObject(nested, nestedType, path, errors, warnings);
+    validateObject(nested, nestedType, path, errors, warnings, true);
   }
 }
 
@@ -610,7 +624,7 @@ function validateArray(
       const itemType = itemObj["@type"] as string | undefined;
 
       if (itemType && schemaDefinitions[itemType]) {
-        validateObject(itemObj, itemType, itemPath, errors, warnings);
+        validateObject(itemObj, itemType, itemPath, errors, warnings, true);
       } else if (
         itemType &&
         propDef.arrayItemExpectedTypes?.length &&

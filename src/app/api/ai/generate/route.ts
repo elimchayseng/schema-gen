@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { fetchPage } from "@/lib/url-validator/fetcher";
 import { generateSchemas } from "@/lib/ai/client";
-import { fixAndValidateAIOutput } from "@/lib/validation/integration";
+import { fixAndValidateAIOutputWithContext } from "@/lib/validation/integration";
 import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 import type { GenerateResponse, ValidatedRecommendation } from "@/lib/ai/types";
 
@@ -80,7 +80,10 @@ export async function POST(request: Request) {
   const validatedRecommendations: ValidatedRecommendation[] =
     filtered.map((rec) => {
       try {
-        const fixResult = fixAndValidateAIOutput(JSON.stringify(rec.jsonld));
+        const fixResult = fixAndValidateAIOutputWithContext(
+          JSON.stringify(rec.jsonld),
+          { pageUrl: fetchResult.finalUrl }
+        );
         return {
           ...rec,
           jsonld: fixResult.fixed,

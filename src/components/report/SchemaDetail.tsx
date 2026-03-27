@@ -47,7 +47,7 @@ function tabInfo(
   }
 }
 
-function IssueItem({ issue, isError }: { issue: ValidationIssue; isError: boolean }) {
+export function IssueItem({ issue, isError, isTip }: { issue: ValidationIssue; isError: boolean; isTip?: boolean }) {
   const context = getSeverityContext(issue.code);
   return (
     <div
@@ -55,8 +55,8 @@ function IssueItem({ issue, isError }: { issue: ValidationIssue; isError: boolea
         isError ? "bg-error-dim/30" : "bg-warn-dim/30"
       }`}
     >
-      <span className={`shrink-0 font-mono font-bold ${isError ? "text-error" : "text-warn"}`}>
-        {isError ? "ERR" : "WRN"}
+      <span className={`shrink-0 font-mono font-bold ${isError ? "text-error" : isTip ? "text-text-muted" : "text-warn"}`}>
+        {isError ? "ERR" : isTip ? "TIP" : "WRN"}
       </span>
       <span className="text-text-secondary">
         <span className="font-mono text-text-muted">{issue.path}</span>{" "}
@@ -79,7 +79,7 @@ function IssueItem({ issue, isError }: { issue: ValidationIssue; isError: boolea
   );
 }
 
-function IssueList({ validation }: { validation: ValidationResult }) {
+export function IssueList({ validation, isTip }: { validation: ValidationResult; isTip?: boolean }) {
   if (validation.errors.length === 0 && validation.warnings.length === 0) {
     return <p className="text-xs text-valid">No issues found.</p>;
   }
@@ -89,7 +89,7 @@ function IssueList({ validation }: { validation: ValidationResult }) {
         <IssueItem key={`e-${i}`} issue={e} isError />
       ))}
       {validation.warnings.map((w, i) => (
-        <IssueItem key={`w-${i}`} issue={w} isError={false} />
+        <IssueItem key={`w-${i}`} issue={w} isError={false} isTip={isTip} />
       ))}
     </div>
   );

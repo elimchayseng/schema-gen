@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { SchemaComparison } from "@/lib/optimizer/types";
 import type { ValidatedRecommendation } from "@/lib/ai/types";
-import SchemaDetail from "./SchemaDetail";
+import SchemaDetail, { IssueList } from "./SchemaDetail";
 import { copyJsonLdScript } from "@/lib/copy-utils";
 import { saveSchema } from "@/lib/save-schema";
 import { getRichResultInfo } from "@/lib/validation/rich-results";
@@ -89,6 +89,17 @@ export default function SchemaRow({
     : (recommendation?.validation.errors.length ?? 0) +
       (recommendation?.validation.warnings.length ?? 0);
 
+  // AI-generated schemas with only warnings (no errors) show "suggestions" instead of "issues"
+  const isAISuggestions = (() => {
+    if (recommendation) {
+      return recommendation.validation.errors.length === 0 && recommendation.validation.warnings.length > 0;
+    }
+    if (comparison?.generated) {
+      return comparison.generated.validation.errors.length === 0 && comparison.generated.validation.warnings.length > 0;
+    }
+    return false;
+  })();
+
   async function handleCopy(e: React.MouseEvent) {
     e.stopPropagation();
     if (!bestSchema) return;
@@ -169,8 +180,8 @@ export default function SchemaRow({
 
         {/* Issue count */}
         {issueCount > 0 && (
-          <span className={`text-xs font-mono ${status === "error" ? "text-error" : "text-warn"}`}>
-            {issueCount} issue{issueCount !== 1 ? "s" : ""}
+          <span className={`text-xs font-mono ${status === "error" ? "text-error" : isAISuggestions ? "text-text-muted" : "text-warn"}`}>
+            {issueCount} {isAISuggestions ? "suggestion" : "issue"}{issueCount !== 1 ? "s" : ""}
           </span>
         )}
         {issueCount === 0 && (
@@ -229,6 +240,7 @@ export default function SchemaRow({
                   {recommendation.rationale}
                 </p>
               )}
+              <IssueList validation={recommendation.validation} isTip={isAISuggestions} />
             </div>
           )}
         </div>

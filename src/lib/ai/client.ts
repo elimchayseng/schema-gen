@@ -112,8 +112,12 @@ YOUR RESPONSIBILITIES:
 
 4. You MUST include all REQUIRED properties for each schema type. Extract the data
    from the page HTML — prices, currency codes, product names, etc. are always present
-   on ecommerce pages. For RECOMMENDED properties, include them if the data is present
-   or strongly inferable. Never include empty or placeholder values.
+   on ecommerce pages. For RECOMMENDED properties, you MUST include them whenever the
+   data is present, inferable, or can be reasonably summarized from page content.
+   Missing recommended properties trigger validation warnings. In particular, every
+   top-level schema MUST include a 'description' property — extract or summarize it
+   from the page content. For nested objects (e.g., Offer inside Product), also include
+   recommended properties of the nested type. Never include empty or placeholder values.
 
 5. Every property must be valid for its schema.org @type. Never place a property
    on the wrong object type. For example: 'color', 'material', 'sku', and 'brand'
