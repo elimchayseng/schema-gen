@@ -191,7 +191,7 @@ export default function SchemaDetail({
               </div>
             )}
             <ResolvedList issues={comparison.generated.resolvedFromOriginal} />
-            {/* If enhancement notes exist, only show errors (warnings are in notes) */}
+            {/* If enhancement notes exist, only show errors (notes shown outside this panel) */}
             {comparison.generated.enhancementNotes?.length ? (
               <>
                 {comparison.generated.validation.errors.length > 0 && (
@@ -203,19 +203,8 @@ export default function SchemaDetail({
                   />
                 )}
                 {comparison.generated.validation.errors.length === 0 && (
-                  <p className="text-xs text-valid mb-2">No issues found.</p>
+                  <p className="text-xs text-valid">No issues found.</p>
                 )}
-                <div className="mt-2 rounded-md border border-accent/20 bg-accent/5 px-3 py-2">
-                  <p className="text-xs font-medium text-accent mb-1">Enhancement Suggestions</p>
-                  <ul className="flex flex-col gap-1">
-                    {comparison.generated.enhancementNotes.map((note, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-xs text-text-secondary leading-relaxed">
-                        <span className="mt-0.5 shrink-0 text-accent">&#8226;</span>
-                        <span>{note}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
               </>
             ) : (
               <IssueList validation={comparison.generated.validation} />
