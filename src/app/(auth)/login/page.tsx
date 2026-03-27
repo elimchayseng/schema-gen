@@ -25,49 +25,50 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/dashboard");
+    router.push("/");
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4">
-      <div className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-8">
-        <h1 className="mb-6 text-lg font-semibold text-white">SchemaGen</h1>
+    <div className="flex min-h-screen items-center justify-center bg-surface-0 px-4">
+      <div className="w-full max-w-sm rounded-lg border border-border bg-surface-1 p-8">
+        <h1 className="mb-1 font-mono text-lg font-bold text-accent">SchemaGen</h1>
+        <p className="mb-6 text-xs text-text-muted">Sign in to continue</p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div>
-            <label className="mb-1 block text-sm text-zinc-300">Email</label>
+            <label className="mb-1 block text-xs text-text-secondary">Email</label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+              className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:border-accent focus:outline-none"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-sm text-zinc-300">Password</label>
+            <label className="mb-1 block text-xs text-text-secondary">Password</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete="current-password"
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+              className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:border-accent focus:outline-none"
             />
           </div>
 
           {error && (
-            <p className="text-sm text-red-400">{error}</p>
+            <p className="text-xs text-error">{error}</p>
           )}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+            className="w-full rounded-md bg-accent py-2 text-sm font-bold text-surface-0 transition-colors hover:bg-accent-bright disabled:opacity-50"
           >
-            {loading ? "Signing in…" : "Sign In"}
+            {loading ? "Signing in..." : "Sign In"}
           </button>
         </form>
       </div>

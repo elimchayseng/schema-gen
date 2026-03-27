@@ -306,7 +306,7 @@ function EditorContent() {
     try {
       const res = await fetch(`/api/schemas/${schemaId}`, { method: "DELETE" });
       if (res.ok) {
-        router.push("/dashboard");
+        router.push("/");
       } else {
         const data = await res.json();
         setSaveMessage(data.error ?? "Delete failed");
@@ -385,12 +385,12 @@ function EditorContent() {
       <div className="mb-6 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Link
-            href="/dashboard"
-            className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-white"
+            href="/"
+            className="rounded-sm px-2 py-1 text-xs text-text-muted transition-colors hover:text-text-secondary"
           >
             &larr; Back
           </Link>
-          <h1 className="text-xl font-bold text-white">Schema Editor</h1>
+          <h1 className="text-lg font-bold text-text-primary">Schema Editor</h1>
         </div>
         <div className="flex items-center gap-3">
           {saveMessage && (

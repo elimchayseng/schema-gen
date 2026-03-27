@@ -6,11 +6,8 @@ import { useAuth } from "@/components/AuthProvider";
 import { createBrowserClient } from "@/lib/supabase";
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/editor", label: "Schema Editor" },
-  { href: "/validator", label: "URL Validator" },
-  { href: "/generator", label: "Generator" },
-  { href: "/optimizer", label: "Optimizer" },
+  { href: "/", label: "Scan" },
+  { href: "/editor", label: "Schemas" },
 ];
 
 export default function Navbar() {
@@ -24,40 +21,51 @@ export default function Navbar() {
     router.push("/login");
   }
 
-  return (
-    <nav className="border-b border-zinc-800 bg-zinc-950">
-      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
-        <Link href="/dashboard" className="text-lg font-semibold text-white">
-          SchemaGen
-        </Link>
+  // Hide navbar on login
+  if (pathname === "/login") return null;
 
-        <div className="flex items-center gap-1">
-          {navItems.map((item) => {
-            const isActive = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-zinc-800 text-white"
-                    : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
-                }`}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
+  return (
+    <nav className="border-b border-border bg-surface-0">
+      <div className="mx-auto flex h-12 max-w-6xl items-center justify-between px-5">
+        <div className="flex items-center gap-6">
+          <Link
+            href="/"
+            className="font-mono text-sm font-bold text-accent tracking-tight"
+          >
+            SchemaGen
+          </Link>
+
+          <div className="flex items-center gap-1">
+            {navItems.map((item) => {
+              const isActive =
+                item.href === "/"
+                  ? pathname === "/" || pathname === "/report"
+                  : pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`rounded-sm px-2.5 py-1 text-xs font-medium transition-colors ${
+                    isActive
+                      ? "bg-surface-2 text-text-primary"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
         </div>
 
         {user && (
           <div className="flex items-center gap-3">
-            <span className="max-w-[160px] truncate text-xs text-zinc-400">
+            <span className="max-w-[140px] truncate font-mono text-[10px] text-text-muted">
               {user.email}
             </span>
             <button
               onClick={handleSignOut}
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-white"
+              className="rounded-sm px-2 py-1 text-[10px] font-medium text-text-muted transition-colors hover:text-text-secondary"
             >
               Sign Out
             </button>

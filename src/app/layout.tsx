@@ -1,15 +1,26 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { DM_Sans, JetBrains_Mono } from "next/font/google";
 import Navbar from "@/components/Navbar";
 import AuthProvider from "@/components/AuthProvider";
+import { ScanProvider } from "@/components/ScanProvider";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  variable: "--font-dm-sans",
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "SchemaGen — Schema Markup for Shopify",
+  title: "SchemaGen — Structured Data Optimizer",
   description:
-    "Generate structured data schema markup for your Shopify store to improve SEO and rich results.",
+    "AI-powered structured data optimizer for ecommerce. Scan, fix, and deploy JSON-LD schema markup.",
 };
 
 export default function RootLayout({
@@ -20,11 +31,13 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${inter.className} min-h-screen bg-zinc-950 text-zinc-100 antialiased`}
+        className={`${dmSans.variable} ${jetbrainsMono.variable} font-sans min-h-screen bg-surface-0 text-text-primary antialiased`}
       >
         <AuthProvider>
-          <Navbar />
-          <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
+          <ScanProvider>
+            <Navbar />
+            <main className="mx-auto max-w-6xl px-5 py-6">{children}</main>
+          </ScanProvider>
         </AuthProvider>
       </body>
     </html>
