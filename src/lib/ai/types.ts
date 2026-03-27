@@ -30,6 +30,10 @@ export interface GeneratorResult {
 export interface ValidatedRecommendation extends SchemaRecommendation {
   validation: ValidationResult;
   fixes: FixApplied[];
+  /** AI-written notes for remaining gaps the user can optionally address */
+  enhancementNotes?: string[];
+  /** Number of AI refinement passes that ran (0 = no refinement needed) */
+  refinementPasses?: number;
 }
 
 /** Full API response from /api/ai/generate */

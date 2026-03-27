@@ -42,12 +42,15 @@ const expectations: Record<string, SchemaExpectation[]> = {
   ],
   collection: [
     { schemaType: "BreadcrumbList", level: "required", weight: 8 },
+    { schemaType: "CollectionPage", level: "recommended", weight: 6 },
     { schemaType: "WebSite", level: "recommended", weight: 4 },
+    { schemaType: "ItemList", level: "optional", weight: 3 },
     { schemaType: "Organization", level: "optional", weight: 2 },
   ],
   contact: [
     { schemaType: "Organization", level: "required", weight: 8 },
     { schemaType: "LocalBusiness", level: "recommended", weight: 6 },
+    { schemaType: "ContactPage", level: "recommended", weight: 4 },
     { schemaType: "BreadcrumbList", level: "optional", weight: 3 },
   ],
   faq: [
@@ -56,8 +59,13 @@ const expectations: Record<string, SchemaExpectation[]> = {
   ],
   about: [
     { schemaType: "Organization", level: "required", weight: 8 },
+    { schemaType: "AboutPage", level: "recommended", weight: 4 },
     { schemaType: "BreadcrumbList", level: "recommended", weight: 4 },
     { schemaType: "WebSite", level: "optional", weight: 2 },
+  ],
+  howto: [
+    { schemaType: "HowTo", level: "required", weight: 10 },
+    { schemaType: "BreadcrumbList", level: "recommended", weight: 4 },
   ],
 };
 

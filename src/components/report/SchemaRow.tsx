@@ -3,9 +3,10 @@
 import { useState } from "react";
 import type { SchemaComparison } from "@/lib/optimizer/types";
 import type { ValidatedRecommendation } from "@/lib/ai/types";
-import SchemaDetail from "./SchemaDetail";
+import SchemaDetail, { IssueList } from "./SchemaDetail";
 import { copyJsonLdScript } from "@/lib/copy-utils";
 import { saveSchema } from "@/lib/save-schema";
+import { getRichResultInfo } from "@/lib/validation/rich-results";
 
 interface SchemaRowProps {
   comparison?: SchemaComparison;
@@ -32,13 +33,13 @@ function getStatus(comparison: SchemaComparison): "valid" | "warning" | "error" 
   const v = "validation" in best ? best.validation : null;
   if (!v) return "error";
   if (v.errors.length > 0) return "error";
-  if (v.warnings.length > 0) return "warning";
+  // No errors = valid. Warnings are enhancement suggestions, not blockers.
   return "valid";
 }
 
 function getRecStatus(rec: ValidatedRecommendation): "valid" | "warning" | "error" {
   if (rec.validation.errors.length > 0) return "error";
-  if (rec.validation.warnings.length > 0) return "warning";
+  // No errors = valid. Warnings are enhancement suggestions, not blockers.
   return "valid";
 }
 
@@ -48,11 +49,6 @@ const statusDot = {
   error: "bg-error",
 } as const;
 
-const statusLabel = {
-  valid: "Valid",
-  warning: "Warnings",
-  error: "Errors",
-} as const;
 
 export default function SchemaRow({
   comparison,
@@ -76,15 +72,24 @@ export default function SchemaRow({
     recommendation?.shopifyInstructions ??
     null;
 
+  const richResult = getRichResultInfo(schemaType);
+
+  // For AI-refined schemas, only count errors (warnings are captured in enhancementNotes)
+  const enhancementNotes =
+    comparison?.generated?.enhancementNotes ??
+    recommendation?.enhancementNotes ??
+    [];
+  const hasEnhancementNotes = enhancementNotes.length > 0;
+
+  // Only count actual errors as "issues". Warnings are enhancement suggestions, not blockers.
   const issueCount = comparison
     ? (() => {
         const best = comparison.generated ?? comparison.fixed ?? comparison.existing;
         if (!best) return 0;
         const v = "validation" in best ? best.validation : null;
-        return (v?.errors.length ?? 0) + (v?.warnings.length ?? 0);
+        return v?.errors.length ?? 0;
       })()
-    : (recommendation?.validation.errors.length ?? 0) +
-      (recommendation?.validation.warnings.length ?? 0);
+    : (recommendation?.validation.errors.length ?? 0);
 
   async function handleCopy(e: React.MouseEvent) {
     e.stopPropagation();
@@ -152,18 +157,26 @@ export default function SchemaRow({
         <span className="rounded-sm bg-surface-3 px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
           {sourceTag}
         </span>
+        {richResult?.eligible && (
+          <span
+            className="rounded-sm bg-valid/10 px-1.5 py-0.5 text-[10px] font-medium text-valid"
+            title={richResult.description}
+          >
+            Rich Result
+          </span>
+        )}
 
         {/* Spacer */}
         <span className="flex-1" />
 
-        {/* Issue count */}
+        {/* Status indicator */}
         {issueCount > 0 && (
-          <span className={`text-xs font-mono ${status === "error" ? "text-error" : "text-warn"}`}>
+          <span className="text-xs font-mono text-error">
             {issueCount} issue{issueCount !== 1 ? "s" : ""}
           </span>
         )}
         {issueCount === 0 && (
-          <span className="text-xs font-mono text-valid">{statusLabel[status]}</span>
+          <span className="text-xs font-mono text-valid">Valid</span>
         )}
 
         {/* Quick actions */}
@@ -218,6 +231,38 @@ export default function SchemaRow({
                   {recommendation.rationale}
                 </p>
               )}
+              {/* Only show errors as issue badges; warnings are in enhancementNotes */}
+              {recommendation.enhancementNotes?.length ? (
+                <>
+                  {recommendation.validation.errors.length > 0 && (
+                    <IssueList
+                      validation={{
+                        ...recommendation.validation,
+                        warnings: [],
+                      }}
+                    />
+                  )}
+                </>
+              ) : (
+                <IssueList validation={recommendation.validation} isTip={recommendation.validation.errors.length === 0} />
+              )}
+            </div>
+          )}
+
+          {/* Enhancement notes — friendly guidance for remaining gaps */}
+          {hasEnhancementNotes && (
+            <div className="mt-4 rounded-md border border-accent/20 bg-accent/5 px-4 py-3">
+              <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-accent">
+                Enhancement Suggestions
+              </h4>
+              <ul className="flex flex-col gap-2">
+                {enhancementNotes.map((note, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-text-secondary leading-relaxed">
+                    <span className="mt-0.5 shrink-0 text-accent">&#8226;</span>
+                    <span>{note}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>

@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { SchemaComparison, ResolvedIssue } from "@/lib/optimizer/types";
-import type { ValidationResult } from "@/lib/validation/types";
+import type { ValidationResult, ValidationIssue } from "@/lib/validation/types";
+import { getSeverityContext } from "@/lib/validation/rich-results";
 
 type Tab = "current" | "fixed" | "generated";
 
@@ -37,44 +38,59 @@ function tabInfo(
     case "generated": {
       const resolved = comparison.generated?.resolvedFromOriginal.length ?? 0;
       const errCount = comparison.generated?.validation.errors.length ?? 0;
+      const hasNotes = (comparison.generated?.enhancementNotes?.length ?? 0) > 0;
       return {
         label: "AI Enhanced",
-        count: resolved > 0 ? `+${resolved}` : "0",
+        count: resolved > 0 ? `+${resolved}` : hasNotes ? "notes" : "0",
         color: errCount > 0 ? "text-error" : "text-valid",
       };
     }
   }
 }
 
-function IssueList({ validation }: { validation: ValidationResult }) {
+export function IssueItem({ issue, isError, isTip }: { issue: ValidationIssue; isError: boolean; isTip?: boolean }) {
+  const context = getSeverityContext(issue.code);
+  return (
+    <div
+      className={`flex items-start gap-2 rounded-sm px-3 py-1.5 text-xs ${
+        isError ? "bg-error-dim/30" : "bg-warn-dim/30"
+      }`}
+    >
+      <span className={`shrink-0 font-mono font-bold ${isError ? "text-error" : isTip ? "text-text-muted" : "text-warn"}`}>
+        {isError ? "ERR" : isTip ? "TIP" : "WRN"}
+      </span>
+      <span className="text-text-secondary">
+        <span className="font-mono text-text-muted">{issue.path}</span>{" "}
+        {issue.message}
+        {context && (
+          <span
+            className={`ml-1.5 inline-block rounded-sm px-1 py-0.5 text-[10px] font-medium ${
+              context.impact === "critical"
+                ? "bg-error/10 text-error"
+                : context.impact === "recommended"
+                  ? "bg-warn/10 text-warn"
+                  : "bg-surface-3 text-text-muted"
+            }`}
+          >
+            {context.label}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+export function IssueList({ validation, isTip }: { validation: ValidationResult; isTip?: boolean }) {
   if (validation.errors.length === 0 && validation.warnings.length === 0) {
     return <p className="text-xs text-valid">No issues found.</p>;
   }
   return (
     <div className="flex flex-col gap-1">
       {validation.errors.map((e, i) => (
-        <div
-          key={`e-${i}`}
-          className="flex items-start gap-2 rounded-sm bg-error-dim/30 px-3 py-1.5 text-xs"
-        >
-          <span className="shrink-0 font-mono text-error">ERR</span>
-          <span className="text-text-secondary">
-            <span className="font-mono text-text-muted">{e.path}</span>{" "}
-            {e.message}
-          </span>
-        </div>
+        <IssueItem key={`e-${i}`} issue={e} isError />
       ))}
       {validation.warnings.map((w, i) => (
-        <div
-          key={`w-${i}`}
-          className="flex items-start gap-2 rounded-sm bg-warn-dim/30 px-3 py-1.5 text-xs"
-        >
-          <span className="shrink-0 font-mono text-warn">WRN</span>
-          <span className="text-text-secondary">
-            <span className="font-mono text-text-muted">{w.path}</span>{" "}
-            {w.message}
-          </span>
-        </div>
+        <IssueItem key={`w-${i}`} issue={w} isError={false} isTip={isTip} />
       ))}
     </div>
   );
@@ -153,13 +169,7 @@ export default function SchemaDetail({
             {comparison.fixed.remainingErrors.length > 0 && (
               <div className="flex flex-col gap-1">
                 {comparison.fixed.remainingErrors.map((e, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-2 rounded-sm bg-error-dim/30 px-3 py-1.5 text-xs"
-                  >
-                    <span className="shrink-0 font-mono text-error">ERR</span>
-                    <span className="text-text-secondary">{e.message}</span>
-                  </div>
+                  <IssueItem key={i} issue={e} isError />
                 ))}
               </div>
             )}
@@ -172,12 +182,32 @@ export default function SchemaDetail({
 
         {activeTab === "generated" && comparison.generated && (
           <>
-            <ResolvedList issues={comparison.generated.resolvedFromOriginal} />
-            <IssueList validation={comparison.generated.validation} />
             {comparison.generated.rationale && (
-              <p className="mt-2 text-xs text-text-secondary">
-                {comparison.generated.rationale}
-              </p>
+              <div className="mb-3 rounded-md border border-accent/20 bg-accent/5 px-3 py-2">
+                <p className="text-xs font-medium text-accent mb-0.5">Why this schema</p>
+                <p className="text-xs text-text-secondary leading-relaxed">
+                  {comparison.generated.rationale}
+                </p>
+              </div>
+            )}
+            <ResolvedList issues={comparison.generated.resolvedFromOriginal} />
+            {/* If enhancement notes exist, only show errors (notes shown outside this panel) */}
+            {comparison.generated.enhancementNotes?.length ? (
+              <>
+                {comparison.generated.validation.errors.length > 0 && (
+                  <IssueList
+                    validation={{
+                      ...comparison.generated.validation,
+                      warnings: [],
+                    }}
+                  />
+                )}
+                {comparison.generated.validation.errors.length === 0 && (
+                  <p className="text-xs text-valid">No issues found.</p>
+                )}
+              </>
+            ) : (
+              <IssueList validation={comparison.generated.validation} />
             )}
           </>
         )}

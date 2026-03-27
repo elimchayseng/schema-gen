@@ -871,4 +871,253 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
       },
     ],
   },
+
+  // ------------------------------------------------------------------
+  // HowTo types (Google Rich Result eligible)
+  // ------------------------------------------------------------------
+  HowTo: {
+    type: "HowTo",
+    extends: "Thing",
+    description: "Instructions for how to achieve a result by performing a sequence of steps.",
+    properties: [
+      {
+        name: "name",
+        requirement: "required",
+        valueType: "Text",
+        description: "The title of the how-to.",
+      },
+      {
+        name: "step",
+        requirement: "required",
+        valueType: "Array",
+        arrayItemType: "Object",
+        arrayItemExpectedTypes: ["HowToStep", "HowToSection"],
+        description: "The steps to complete the how-to.",
+      },
+      {
+        name: "description",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "totalTime",
+        requirement: "recommended",
+        valueType: "Text",
+        description: "Total time to perform all steps (ISO 8601 duration, e.g. PT30M).",
+      },
+      {
+        name: "estimatedCost",
+        requirement: "optional",
+        valueType: "Text",
+        description: "Estimated cost of supplies consumed.",
+      },
+      {
+        name: "supply",
+        requirement: "optional",
+        valueType: "Array",
+        arrayItemType: "Text",
+        description: "Supplies consumed when performing instructions.",
+      },
+      {
+        name: "tool",
+        requirement: "optional",
+        valueType: "Array",
+        arrayItemType: "Text",
+        description: "Tools used but not consumed.",
+      },
+    ],
+  },
+
+  HowToStep: {
+    type: "HowToStep",
+    extends: "Thing",
+    description: "A single step in a how-to.",
+    properties: [
+      {
+        name: "text",
+        requirement: "required",
+        valueType: "Text",
+        description: "The full instruction text of this step.",
+      },
+      {
+        name: "name",
+        requirement: "recommended",
+        valueType: "Text",
+        description: "A short summary of the step.",
+      },
+      {
+        name: "url",
+        requirement: "optional",
+        valueType: "URL",
+        description: "URL that directly links to this step.",
+      },
+      {
+        name: "image",
+        requirement: "optional",
+        valueType: "URL",
+        description: "Image illustrating this step.",
+      },
+    ],
+  },
+
+  HowToSection: {
+    type: "HowToSection",
+    extends: "Thing",
+    description: "A grouping of steps within a how-to.",
+    properties: [
+      {
+        name: "name",
+        requirement: "recommended",
+        valueType: "Text",
+        description: "The name of this section.",
+      },
+      {
+        name: "itemListElement",
+        requirement: "required",
+        valueType: "Array",
+        arrayItemType: "Object",
+        arrayItemExpectedTypes: ["HowToStep"],
+        description: "The steps in this section.",
+      },
+    ],
+  },
+
+  HowToDirection: {
+    type: "HowToDirection",
+    extends: "Thing",
+    description: "A direction in the instructions for a how-to.",
+    properties: [
+      {
+        name: "text",
+        requirement: "required",
+        valueType: "Text",
+        description: "The direction text.",
+      },
+    ],
+  },
+
+  HowToTip: {
+    type: "HowToTip",
+    extends: "Thing",
+    description: "A tip for completing a step in a how-to.",
+    properties: [
+      {
+        name: "text",
+        requirement: "required",
+        valueType: "Text",
+        description: "The tip text.",
+      },
+    ],
+  },
+
+  // ------------------------------------------------------------------
+  // Page types
+  // ------------------------------------------------------------------
+  CollectionPage: {
+    type: "CollectionPage",
+    extends: "Thing",
+    description: "A page that groups related items (e.g. a product collection).",
+    properties: [
+      {
+        name: "name",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "description",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "url",
+        requirement: "recommended",
+        valueType: "URL",
+      },
+      {
+        name: "mainEntity",
+        requirement: "optional",
+        valueType: "Object",
+        expectedTypes: ["ItemList"],
+        description: "The primary list of items on this page.",
+      },
+    ],
+  },
+
+  ItemList: {
+    type: "ItemList",
+    extends: "Thing",
+    description: "A list of items, often used for carousels or collections.",
+    properties: [
+      {
+        name: "itemListElement",
+        requirement: "required",
+        valueType: "Array",
+        arrayItemType: "Object",
+        arrayItemExpectedTypes: ["ListItem"],
+        description: "The items in this list.",
+      },
+      {
+        name: "name",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "numberOfItems",
+        requirement: "recommended",
+        valueType: "Integer",
+      },
+      {
+        name: "itemListOrder",
+        requirement: "optional",
+        valueType: "Text",
+        description: "The order of the list (e.g. 'ascending', 'descending', 'unordered').",
+      },
+    ],
+  },
+
+  AboutPage: {
+    type: "AboutPage",
+    extends: "Thing",
+    description: "A web page that provides information about the site or organization.",
+    properties: [
+      {
+        name: "name",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "description",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "url",
+        requirement: "recommended",
+        valueType: "URL",
+      },
+    ],
+  },
+
+  ContactPage: {
+    type: "ContactPage",
+    extends: "Thing",
+    description: "A web page with contact information.",
+    properties: [
+      {
+        name: "name",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "description",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "url",
+        requirement: "recommended",
+        valueType: "URL",
+      },
+    ],
+  },
 };

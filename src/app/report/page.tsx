@@ -84,6 +84,7 @@ export default function ReportPage() {
       <DeployBar
         comparisons={results.comparisons}
         newRecommendations={results.newRecommendations}
+        sourceUrl={results.finalUrl || url}
       />
 
       {/* Schema inventory */}

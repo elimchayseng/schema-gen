@@ -5,9 +5,11 @@ import { fetchPage } from "@/lib/url-validator/fetcher";
 import { extractJsonLd } from "@/lib/url-validator/extractor";
 import { detectMissingOpportunities } from "@/lib/url-validator/opportunities";
 import { generateSchemas } from "@/lib/ai/client";
+import { refineAllRecommendations } from "@/lib/ai/refinement";
 import { fixAndValidateAIOutputWithContext } from "@/lib/validation/integration";
 import { fixSchema } from "@/lib/validation/fixer";
 import { validateSchema } from "@/lib/validation/engine";
+import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 import type { ValidatedRecommendation } from "@/lib/ai/types";
 import type { ValidationIssue } from "@/lib/validation/types";
 import type {
@@ -140,46 +142,28 @@ export async function POST(request: Request) {
     llmError = true;
   }
 
-  // Fix and validate LLM output
+  // Fix and validate LLM output (filter unsupported types first)
   const validatedRecs: ValidatedRecommendation[] = [];
   if (llmResult) {
-    for (const rec of llmResult.recommendations) {
-      try {
-        const fixResult = fixAndValidateAIOutputWithContext(
-          JSON.stringify(rec.jsonld),
-          { pageUrl: finalUrl }
+    // Safety net: strip recommendations with unsupported @type
+    llmResult.recommendations = llmResult.recommendations.filter((rec) => {
+      const type = rec.jsonld?.["@type"];
+      if (typeof type === "string" && !schemaDefinitions[type]) {
+        llmResult!.notes.push(
+          `Filtered unsupported schema type "${type}" from recommendations.`
         );
-        validatedRecs.push({
-          ...rec,
-          jsonld: fixResult.fixed,
-          validation: fixResult.validationAfter,
-          fixes: fixResult.fixes,
-        });
-      } catch {
-        validatedRecs.push({
-          ...rec,
-          validation: {
-            valid: false,
-            errors: [
-              {
-                severity: "error",
-                path: "",
-                message: "Auto-fix failed for this recommendation",
-                code: "INVALID_JSON",
-              },
-            ],
-            warnings: [],
-            summary: {
-              errorCount: 1,
-              warningCount: 0,
-              schemaType: rec.type,
-              validationTimeMs: 0,
-            },
-          },
-          fixes: [],
-        });
+        return false;
       }
-    }
+      return true;
+    });
+
+    // Refine all recommendations in parallel: fix → validate → AI refine → fix → validate
+    const refined = await refineAllRecommendations(
+      llmResult.recommendations,
+      finalUrl,
+      html
+    );
+    validatedRecs.push(...refined);
   }
 
   // Match existing schemas to LLM recommendations by @type

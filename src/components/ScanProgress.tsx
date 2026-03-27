@@ -7,6 +7,7 @@ const steps: { key: ScanStep; label: string }[] = [
   { key: "extracting", label: "Extracting schemas" },
   { key: "validating", label: "Running validation" },
   { key: "analyzing", label: "AI analyzing content" },
+  { key: "refining", label: "Refining schemas" },
   { key: "scoring", label: "Computing score" },
 ];
 
