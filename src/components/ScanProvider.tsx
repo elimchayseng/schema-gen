@@ -9,6 +9,7 @@ export type ScanStep =
   | "extracting"
   | "validating"
   | "analyzing"
+  | "refining"
   | "scoring"
   | "done"
   | "error";
@@ -32,6 +33,7 @@ const STEP_DELAYS: [ScanStep, number][] = [
   ["extracting", 1200],
   ["validating", 2000],
   ["analyzing", 3000],
+  ["refining", 5000],
 ];
 
 export function ScanProvider({ children }: { children: React.ReactNode }) {

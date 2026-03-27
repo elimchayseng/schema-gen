@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import { z } from "zod";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import type { GeneratorResult, LLMMessage } from "./types";
+import type { ValidationIssue } from "@/lib/validation/types";
 import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
@@ -472,6 +473,220 @@ export async function generateSchemas(
         elapsedMs: Date.now() - startTime,
       });
       throw new Error(`LLM request timed out after ${TIMEOUT_MS / 1000} seconds`);
+    }
+    throw err;
+  }
+}
+
+// ─── Refinement helpers ─────────────────────────────────────────────────────
+
+/** Issue codes the deterministic auto-fixer already handles — skip in refinement prompt */
+const FIXER_HANDLED_CODES = new Set([
+  "MISSING_CONTEXT",
+  "INVALID_CONTEXT",
+  "ENUM_FORMAT",
+  "SUBOPTIMAL_TYPE",
+  "INVALID_PROPERTY",
+  "INVALID_PROPERTY_PLACEMENT",
+]);
+
+/**
+ * Format validation issues into a numbered list for the refinement prompt.
+ * Filters out issues the auto-fixer already handles.
+ * Returns empty string if no actionable issues remain.
+ */
+export function formatIssuesForRefinement(
+  errors: ValidationIssue[],
+  warnings: ValidationIssue[]
+): string {
+  const actionable = [...errors, ...warnings].filter(
+    (i) => !FIXER_HANDLED_CODES.has(i.code)
+  );
+  if (actionable.length === 0) return "";
+
+  // Sort errors first, then warnings
+  actionable.sort((a, b) =>
+    a.severity === b.severity ? 0 : a.severity === "error" ? -1 : 1
+  );
+
+  return actionable
+    .map((issue, idx) => {
+      const parts = [
+        `${idx + 1}. [${issue.severity.toUpperCase()}] ${issue.code} at "${issue.path}": ${issue.message}`,
+      ];
+      if (issue.expectedValue)
+        parts.push(`   Expected: ${issue.expectedValue}`);
+      if (issue.suggestion) parts.push(`   Suggestion: ${issue.suggestion}`);
+      return parts.join("\n");
+    })
+    .join("\n");
+}
+
+// ─── Refinement system prompt ───────────────────────────────────────────────
+
+const REFINEMENT_SYSTEM_PROMPT = `You are a structured data specialist refining an existing JSON-LD schema.
+You will receive a JSON-LD schema that has validation issues, along with a list of specific problems to fix.
+
+YOUR RESPONSIBILITIES:
+
+1. Fix ALL listed validation errors. These are blocking issues that prevent Google Rich Results eligibility.
+2. Fix as many warnings as possible using data from the page URL and schema context.
+3. For any warnings you CANNOT fix (because the data doesn't exist in the schema or page context),
+   generate a clear, friendly enhancement note explaining what the user could add.
+4. Do NOT remove existing valid properties. Only modify or add properties to fix issues.
+5. Maintain the same @type and overall structure.
+
+ENHANCEMENT NOTES RULES:
+- Write notes in plain, friendly language for non-technical users
+- Each note should explain: what's missing, why it matters, and how to add it
+- Example: "We couldn't find a product description on your page. Adding a 'description' helps Google display richer search results. You can add it directly to the schema or ensure your product page includes a description."
+- Only generate notes for issues you could NOT fix — do not generate notes for issues you successfully resolved
+
+STRICT OUTPUT RULES:
+- Respond ONLY with a valid JSON object matching this exact structure:
+{
+  "jsonld": { <the corrected JSON-LD object> },
+  "enhancementNotes": [ "<friendly note for each unresolved warning>" ]
+}
+- Your entire response must be parseable by JSON.parse().
+- No prose, no markdown, no explanation outside the JSON structure.
+- If all issues are fixed, "enhancementNotes" should be an empty array.`;
+
+const REFINEMENT_TIMEOUT_MS = 30_000;
+
+// ─── Refinement response validation ─────────────────────────────────────────
+
+const refinementResultSchema = z.object({
+  jsonld: z.record(z.string(), z.unknown()),
+  enhancementNotes: z.array(z.string()),
+});
+
+// ─── Main refinement function ───────────────────────────────────────────────
+
+export interface RefinementOutput {
+  refined: Record<string, unknown>;
+  enhancementNotes: string[];
+}
+
+/**
+ * Send a schema + validation issues back to the LLM for targeted fixes.
+ * Returns the refined schema and any enhancement notes for unresolvable gaps.
+ */
+export async function refineSchema(
+  currentSchema: Record<string, unknown>,
+  issueList: string,
+  url: string
+): Promise<RefinementOutput> {
+  if (!INFERENCE_URL || !INFERENCE_KEY || !INFERENCE_MODEL) {
+    throw new Error("Missing Heroku Inference environment variables");
+  }
+
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const startTime = Date.now();
+
+  log("info", "Starting schema refinement", {
+    requestId,
+    url,
+    schemaType: currentSchema["@type"],
+  });
+
+  const userContent = `Page URL: ${url}
+
+Current schema:
+${JSON.stringify(currentSchema, null, 2)}
+
+Validation issues to fix:
+${issueList}
+
+Fix these issues and return the corrected JSON-LD. For any warnings you cannot resolve, generate a friendly enhancement note.`;
+
+  const messages: LLMMessage[] = [
+    { role: "system", content: REFINEMENT_SYSTEM_PROMPT },
+    { role: "user", content: userContent },
+  ];
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REFINEMENT_TIMEOUT_MS);
+
+  try {
+    const endpoint =
+      INFERENCE_URL.replace(/\/+$/, "") + "/v1/chat/completions";
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${INFERENCE_KEY}`,
+      },
+      body: JSON.stringify({
+        model: INFERENCE_MODEL,
+        messages,
+        temperature: 0.1,
+        max_tokens: 4096,
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      clearTimeout(timer);
+      const errorText = await response.text().catch(() => "Unknown error");
+      log("error", "Refinement API error", {
+        requestId,
+        status: response.status,
+        errorBody: errorText.slice(0, 500),
+      });
+      throw new Error(`Refinement API returned ${response.status}`);
+    }
+
+    const content = await readSSEStream(response, requestId);
+    clearTimeout(timer);
+
+    if (!content) {
+      throw new Error("Refinement returned empty response");
+    }
+
+    // Strip markdown code fences
+    let jsonContent = content.trim();
+    if (jsonContent.startsWith("```")) {
+      jsonContent = jsonContent
+        .replace(/^```(?:json)?\s*\n?/, "")
+        .replace(/\n?```\s*$/, "");
+    }
+
+    const parsed = JSON.parse(jsonContent);
+    const validated = refinementResultSchema.safeParse(parsed);
+
+    if (!validated.success) {
+      log("warn", "Refinement response failed schema validation", {
+        requestId,
+        zodErrors: validated.error.issues.map((i) => ({
+          path: i.path.join("."),
+          message: i.message,
+        })),
+      });
+      throw new Error("Refinement response does not match expected schema");
+    }
+
+    log("info", "Schema refinement complete", {
+      requestId,
+      durationMs: Date.now() - startTime,
+      enhancementNoteCount: validated.data.enhancementNotes.length,
+    });
+
+    return {
+      refined: validated.data.jsonld,
+      enhancementNotes: validated.data.enhancementNotes,
+    };
+  } catch (err: unknown) {
+    clearTimeout(timer);
+    if (err instanceof Error && err.name === "AbortError") {
+      log("error", "Refinement timed out", {
+        requestId,
+        timeoutMs: REFINEMENT_TIMEOUT_MS,
+        elapsedMs: Date.now() - startTime,
+      });
+      throw new Error("Refinement timed out");
     }
     throw err;
   }

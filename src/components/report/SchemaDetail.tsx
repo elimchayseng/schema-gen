@@ -38,9 +38,10 @@ function tabInfo(
     case "generated": {
       const resolved = comparison.generated?.resolvedFromOriginal.length ?? 0;
       const errCount = comparison.generated?.validation.errors.length ?? 0;
+      const hasNotes = (comparison.generated?.enhancementNotes?.length ?? 0) > 0;
       return {
         label: "AI Enhanced",
-        count: resolved > 0 ? `+${resolved}` : "0",
+        count: resolved > 0 ? `+${resolved}` : hasNotes ? "notes" : "0",
         color: errCount > 0 ? "text-error" : "text-valid",
       };
     }
@@ -190,7 +191,35 @@ export default function SchemaDetail({
               </div>
             )}
             <ResolvedList issues={comparison.generated.resolvedFromOriginal} />
-            <IssueList validation={comparison.generated.validation} />
+            {/* If enhancement notes exist, only show errors (warnings are in notes) */}
+            {comparison.generated.enhancementNotes?.length ? (
+              <>
+                {comparison.generated.validation.errors.length > 0 && (
+                  <IssueList
+                    validation={{
+                      ...comparison.generated.validation,
+                      warnings: [],
+                    }}
+                  />
+                )}
+                {comparison.generated.validation.errors.length === 0 && (
+                  <p className="text-xs text-valid mb-2">No issues found.</p>
+                )}
+                <div className="mt-2 rounded-md border border-accent/20 bg-accent/5 px-3 py-2">
+                  <p className="text-xs font-medium text-accent mb-1">Enhancement Suggestions</p>
+                  <ul className="flex flex-col gap-1">
+                    {comparison.generated.enhancementNotes.map((note, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs text-text-secondary leading-relaxed">
+                        <span className="mt-0.5 shrink-0 text-accent">&#8226;</span>
+                        <span>{note}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            ) : (
+              <IssueList validation={comparison.generated.validation} />
+            )}
           </>
         )}
       </div>
