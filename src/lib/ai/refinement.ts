@@ -100,8 +100,8 @@ export async function refineAndValidate(
       bestFixResult = refinedFixResult;
       enhancementNotes = refinementOutput.enhancementNotes;
       passesRan = pass + 1;
-    } catch {
-      // Refinement failed — keep the pre-refinement result silently
+    } catch (err) {
+      console.error("[refinement] pass failed, keeping pre-refinement result:", err);
       break;
     }
   }
