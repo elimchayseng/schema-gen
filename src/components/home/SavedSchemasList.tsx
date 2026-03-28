@@ -24,6 +24,8 @@ export default function SavedSchemasList() {
           const data = await res.json();
           setSchemas(data.schemas ?? []);
         }
+      } catch (err) {
+        console.error("[SavedSchemasList] failed to load schemas:", err);
       } finally {
         setLoading(false);
       }

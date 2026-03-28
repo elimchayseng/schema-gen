@@ -221,7 +221,7 @@ function EditorContent() {
         setSchemaName(schema.name);
         setJsonOutput(JSON.stringify(schema.content, null, 2));
       })
-      .catch(() => {});
+      .catch((err) => console.error("[editor] failed to load schema:", err));
   }, [schemaId]);
 
   // Live validation — debounced 300ms
