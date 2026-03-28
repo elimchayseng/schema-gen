@@ -767,12 +767,34 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
       {
         name: "target",
         requirement: "required",
-        valueType: "Text",
-        description: "URL template with {search_term_string} placeholder.",
+        valueType: "Object",
+        expectedTypes: ["EntryPoint"],
+        description:
+          "URL template string or EntryPoint object with urlTemplate.",
       },
       {
         name: "query-input",
         requirement: "required",
+        valueType: "Text",
+      },
+    ],
+  },
+
+  EntryPoint: {
+    type: "EntryPoint",
+    extends: "Thing",
+    description: "An entry point for an Action — typically a URL template.",
+    properties: [
+      {
+        name: "urlTemplate",
+        requirement: "required",
+        valueType: "Text",
+        description:
+          "URL template with {search_term_string} placeholder.",
+      },
+      {
+        name: "actionPlatform",
+        requirement: "optional",
         valueType: "Text",
       },
     ],
