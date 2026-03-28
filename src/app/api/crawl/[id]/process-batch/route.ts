@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { processPage } from "@/lib/crawl/process-page";
 import type { BatchResult, PageResult } from "@/lib/crawl/types";
 
-const BATCH_SIZE = 5;
+const BATCH_SIZE = 1;
 
 /**
  * POST /api/crawl/[id]/process-batch — Process the next batch of pending pages.

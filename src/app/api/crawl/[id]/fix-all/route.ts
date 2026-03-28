@@ -40,7 +40,7 @@ export async function POST(
     .select("id, url, status")
     .eq("crawl_id", crawlId)
     .in("status", ["errors", "warnings", "no_schema"])
-    .limit(3); // Process 3 at a time (LLM calls are slow)
+    .limit(1); // Process 1 at a time so dashboard updates after each page
 
   if (!pagesToFix || pagesToFix.length === 0) {
     return NextResponse.json({
