@@ -36,3 +36,59 @@
     transform: translateY(0);
   }
 }
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* --- Saved schemas list delight --- */
+
+/* Staggered entrance for site groups */
+.site-group {
+  animation: fade-in-up 0.35s ease-out both;
+}
+
+/* Skeleton shimmer */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-2) 25%,
+    var(--color-surface-3) 50%,
+    var(--color-surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+/* Page row hover: reveal accent border */
+.page-row:hover .page-row-accent {
+  transform: scaleY(1);
+}
+.page-row:hover {
+  background-color: color-mix(in srgb, var(--color-surface-2) 30%, transparent);
+}
+
+/* Schema badge hover: lift + glow */
+.schema-badge:hover {
+  background-color: var(--color-surface-3);
+  color: var(--color-text-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08);
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .site-group,
+  .skeleton-shimmer {
+    animation: none;
+  }
+  .page-row-accent,
+  .schema-badge {
+    transition: none;
+  }
+}
