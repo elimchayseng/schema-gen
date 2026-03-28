@@ -92,7 +92,7 @@ export default function ReportPage() {
         results.newRecommendations.length > 0) && (
         <div className="rounded-lg border border-border overflow-hidden mb-6">
           <div className="px-5 py-3 bg-surface-1 border-b border-border">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-text-muted">
+            <h2 className="font-serif text-xs uppercase tracking-wider text-text-muted">
               Schema Inventory
             </h2>
           </div>
@@ -121,7 +121,7 @@ export default function ReportPage() {
       {/* Missing opportunities */}
       {results.missingOpportunities.length > 0 && (
         <div className="mb-6">
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-wider text-text-muted">
+          <h2 className="mb-2 font-serif text-xs uppercase tracking-wider text-text-muted">
             Additional Opportunities
           </h2>
           <div className="flex flex-col gap-1">
@@ -157,7 +157,7 @@ export default function ReportPage() {
       {results.notes.length > 0 &&
         !results.notes.every((n) => n.includes("AI generation failed")) && (
           <div className="mb-6">
-            <h2 className="mb-2 text-xs font-bold uppercase tracking-wider text-text-muted">
+            <h2 className="mb-2 font-serif text-xs uppercase tracking-wider text-text-muted">
               Notes
             </h2>
             <ul className="flex flex-col gap-1">

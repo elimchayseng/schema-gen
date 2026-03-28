@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
-import { DM_Sans, JetBrains_Mono } from "next/font/google";
+import { Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import Navbar from "@/components/Navbar";
 import AuthProvider from "@/components/AuthProvider";
 import { ScanProvider } from "@/components/ScanProvider";
 import "./globals.css";
 
-const dmSans = DM_Sans({
+const instrumentSerif = Instrument_Serif({
+  weight: "400",
   subsets: ["latin"],
-  variable: "--font-dm-sans",
+  variable: "--font-instrument-serif",
   display: "swap",
 });
 
@@ -30,8 +31,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
+      <head>
+        <link
+          href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body
-        className={`${dmSans.variable} ${jetbrainsMono.variable} font-sans min-h-screen bg-surface-0 text-text-primary antialiased`}
+        className={`${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans min-h-screen bg-surface-0 text-text-primary antialiased`}
       >
         <AuthProvider>
           <ScanProvider>
