@@ -166,11 +166,11 @@ function SiteSection({ group, index }: { group: SiteGroup; index: number }) {
           }`}
           style={{
             boxShadow: isClean
-              ? "0 0 6px rgba(34,197,94,0.4)"
+              ? "0 0 6px rgba(16,185,129,0.4)"
               : "0 0 6px rgba(239,68,68,0.4)",
           }}
         />
-        <span className="text-sm font-semibold text-text-primary">
+        <span className="text-sm font-semibold text-text-primary font-serif">
           {group.domain}
         </span>
         <span className="text-[10px] text-text-muted">
@@ -359,7 +359,7 @@ export default function SavedSchemasList() {
   return (
     <div>
       <div className="flex items-baseline gap-3 mb-3">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-text-muted">
+        <h2 className="font-serif text-xs uppercase tracking-wider text-text-muted">
           Saved Schemas
         </h2>
         <span className="text-[10px] text-text-muted/60">

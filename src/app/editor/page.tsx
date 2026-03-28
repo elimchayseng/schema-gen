@@ -390,7 +390,7 @@ function EditorContent() {
           >
             &larr; Back
           </Link>
-          <h1 className="text-lg font-bold text-text-primary">Schema Editor</h1>
+          <h1 className="font-serif text-lg text-text-primary">Schema Editor</h1>
         </div>
         <div className="flex items-center gap-3">
           {saveMessage && (
@@ -445,7 +445,7 @@ function EditorContent() {
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Left panel — configuration */}
         <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-400">
+          <h2 className="mb-4 font-serif text-sm uppercase tracking-wider text-text-muted">
             Configuration
           </h2>
 
@@ -533,7 +533,7 @@ function EditorContent() {
         {/* Right panel — JSON preview + validation */}
         <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
+            <h2 className="font-serif text-sm uppercase tracking-wider text-text-muted">
               JSON-LD Output
               <span className="ml-2 text-xs font-normal normal-case tracking-normal text-zinc-600">(editable)</span>
             </h2>

@@ -30,7 +30,7 @@ export default function Navbar() {
         <div className="flex items-center gap-6">
           <Link
             href="/"
-            className="font-mono text-sm font-bold text-accent tracking-tight"
+            className="font-serif text-lg tracking-tight text-accent"
           >
             SchemaGen
           </Link>
