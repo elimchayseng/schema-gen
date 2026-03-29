@@ -102,17 +102,22 @@ export async function GET(
     phase = hasPending ? "scanning" : "done";
   }
 
-  // Always compute fix progress from DB — not conditionally by phase.
-  // A page is "fixed" if it has fixed_schema and landed on valid/warnings.
+  // Stable fix progress: count attempted pages + remaining unattempted fixable pages
   const { count: fixedCount } = await supabase
     .from("page_schemas")
     .select("id", { count: "exact", head: true })
     .eq("crawl_id", id)
-    .not("fixed_schema", "is", null)
-    .in("status", ["valid", "warnings"]);
+    .not("fix_attempted_at", "is", null);
+
+  const { count: remainingFixable } = await supabase
+    .from("page_schemas")
+    .select("id", { count: "exact", head: true })
+    .eq("crawl_id", id)
+    .in("status", ["errors", "warnings", "no_schema"])
+    .is("fix_attempted_at", null);
 
   const fixProcessed = fixedCount ?? 0;
-  const fixTotal = fixProcessed + needsFix;
+  const fixTotal = fixProcessed + (remainingFixable ?? 0);
 
   const response: CrawlStatusResponse = {
     crawlId: id,
@@ -137,7 +142,7 @@ export async function GET(
   // Also fetch page details
   const { data: pageDetails } = await supabase
     .from("page_schemas")
-    .select("id, url, status, original_schema, fixed_schema, validation_results, error_reason")
+    .select("id, url, status, original_schema, fixed_schema, validation_results, error_reason, fix_attempted_at")
     .eq("crawl_id", id)
     .order("url", { ascending: true });
 

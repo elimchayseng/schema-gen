@@ -15,6 +15,7 @@ interface PageSchemaRow {
     warningCount: number;
   } | null;
   error_reason: string | null;
+  fix_attempted_at: string | null;
 }
 
 // Track which pages were fixed and their prior status
@@ -39,6 +40,9 @@ export default function SiteDashboard() {
   const [expandedPage, setExpandedPage] = useState<string | null>(null);
   const [processingUrl, setProcessingUrl] = useState<string | null>(null);
   const [fixingUrl, setFixingUrl] = useState<string | null>(null);
+  const [fixingMode, setFixingMode] = useState<"ai" | "autofix">("autofix");
+  const [fixStep, setFixStep] = useState<string | null>(null);
+  const [fixStepDetail, setFixStepDetail] = useState<string | null>(null);
   const [fixTransitions, setFixTransitions] = useState<FixTransition[]>([]);
   const [scanStartTime, setScanStartTime] = useState<number | null>(null);
   const [fixStartTime, setFixStartTime] = useState<number | null>(null);
@@ -107,10 +111,20 @@ export default function SiteDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crawlStatus?.phase]);
 
-  // Fix All loop
+  // Fix All loop — consumes SSE stream for real-time progress
   const startFixAll = useCallback(async () => {
     setIsFixing(true);
     setFixStartTime(Date.now());
+
+    // Pre-populate first fixable URL from local state so card shows immediately
+    const firstFixable = pages.find((p) =>
+      ["errors", "warnings", "no_schema"].includes(p.status)
+    );
+    if (firstFixable) {
+      setFixingUrl(firstFixable.url);
+      setFixingMode(firstFixable.status === "no_schema" ? "ai" : "autofix");
+      setFixStep("fetching");
+    }
 
     while (true) {
       try {
@@ -119,22 +133,72 @@ export default function SiteDashboard() {
         });
         if (!res.ok) break;
 
-        const data = await res.json();
+        // Check if this is a JSON response (fixComplete terminal case)
+        const contentType = res.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          const data = await res.json();
+          if (data.fixComplete) {
+            setFixDuration(Date.now() - (fixStartTime ?? Date.now()));
+            break;
+          }
+          break;
+        }
 
-        // Record transition for the page that was just fixed
-        if (data.priorStatus && data.fixingPageUrl) {
+        // SSE streaming response — read events in real time
+        if (!res.body) break;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let finalData: any = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split("\n\n");
+          buffer = chunks.pop() ?? "";
+
+          for (const chunk of chunks) {
+            if (!chunk.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(chunk.slice(6));
+
+              if (data.step === "done") {
+                finalData = data;
+              } else {
+                // Real-time step update
+                setFixStep(data.step);
+                setFixStepDetail(data.detail ?? null);
+                if (data.url) setFixingUrl(data.url);
+                if (data.mode) setFixingMode(data.mode === "optimize" ? "ai" : "autofix");
+              }
+            } catch {
+              // Skip malformed SSE chunks
+            }
+          }
+        }
+
+        if (!finalData) break;
+
+        // Process the final "done" event
+        if (finalData.priorStatus && finalData.fixingPageUrl) {
           setFixTransitions((prev) => {
-            if (prev.some((t) => t.url === data.fixingPageUrl)) return prev;
-            return [...prev, { url: data.fixingPageUrl, priorStatus: data.priorStatus }];
+            if (prev.some((t) => t.url === finalData.fixingPageUrl)) return prev;
+            return [...prev, { url: finalData.fixingPageUrl, priorStatus: finalData.priorStatus }];
           });
         }
 
-        // Show the NEXT page being processed, not the one just completed
-        setFixingUrl(data.nextFixingPageUrl ?? null);
+        // Prepare for next iteration
+        setFixingUrl(finalData.nextFixingPageUrl ?? null);
+        setFixingMode(finalData.nextPageStatus === "no_schema" ? "ai" : "autofix");
+        setFixStep(finalData.nextFixingPageUrl ? "fetching" : null);
+        setFixStepDetail(null);
 
         await fetchData();
 
-        if (data.fixComplete) {
+        if (finalData.fixComplete) {
           setFixDuration(Date.now() - (fixStartTime ?? Date.now()));
           break;
         }
@@ -145,7 +209,9 @@ export default function SiteDashboard() {
 
     setIsFixing(false);
     setFixingUrl(null);
-  }, [crawlId, fetchData, fixStartTime]);
+    setFixStep(null);
+    setFixStepDetail(null);
+  }, [crawlId, fetchData, fixStartTime, pages]);
 
   // Export ZIP
   const handleExport = useCallback(async () => {
@@ -213,7 +279,7 @@ export default function SiteDashboard() {
 
   const avgFixTime = fixStartTime && crawlStatus.fixProcessed > 0
     ? Math.round((Date.now() - fixStartTime) / crawlStatus.fixProcessed / 1000)
-    : 20;
+    : 6;
   const fixRemaining = crawlStatus.fixTotal - crawlStatus.fixProcessed;
   const fixEtaSeconds = fixRemaining * avgFixTime;
 
@@ -325,7 +391,7 @@ export default function SiteDashboard() {
           label={effectivePhase === "fixing" ? `Fixing... ${crawlStatus.fixProcessed} of ${crawlStatus.fixTotal} pages` : `Paused at ${crawlStatus.fixProcessed} of ${crawlStatus.fixTotal} pages`}
           progress={fixProgress}
           variant={effectivePhase === "fixing" ? "fix" : "paused"}
-          eta={effectivePhase === "fixing" ? `~${formatDuration(fixEtaSeconds)} remaining · avg ${avgFixTime}s per page (AI generation)` : undefined}
+          eta={effectivePhase === "fixing" ? `~${formatDuration(fixEtaSeconds)} remaining · avg ${avgFixTime}s per page` : undefined}
         />
       )}
 
@@ -348,7 +414,7 @@ export default function SiteDashboard() {
           <div className="mb-2 pl-1 font-serif text-[11px] uppercase tracking-wider text-text-muted">
             Now Fixing
           </div>
-          <ActivePageCard url={fixingUrl} mode="fix" />
+          <ActivePageCard url={fixingUrl} mode="fix" fixMode={fixingMode} fixStep={fixStep} fixStepDetail={fixStepDetail} />
         </>
       )}
 
@@ -488,12 +554,33 @@ function ProgressSection({
   );
 }
 
+const AI_STEPS = [
+  { key: "fetching", label: "Fetching page" },
+  { key: "extracting", label: "Extracting schemas" },
+  { key: "ai_generating", label: "AI analyzing content" },
+  { key: "refining", label: "Refining schemas" },
+  { key: "saving", label: "Saving results" },
+];
+
+const AUTOFIX_STEPS = [
+  { key: "fetching", label: "Fetching page" },
+  { key: "extracting", label: "Extracting schemas" },
+  { key: "validating", label: "Running auto-fixer" },
+  { key: "saving", label: "Saving results" },
+];
+
 function ActivePageCard({
   url,
   mode,
+  fixMode,
+  fixStep,
+  fixStepDetail,
 }: {
   url: string;
   mode: "scan" | "fix";
+  fixMode?: "ai" | "autofix";
+  fixStep?: string | null;
+  fixStepDetail?: string | null;
 }) {
   let urlPath: string;
   try {
@@ -509,14 +596,55 @@ function ActivePageCard({
   const pulseColor = isScan ? "bg-valid" : "bg-fix-bright";
   const urlColor = isScan ? "text-valid" : "text-fix-bright";
 
+  const steps = fixMode === "ai" ? AI_STEPS : AUTOFIX_STEPS;
+  const currentStepIdx = fixStep ? steps.findIndex((s) => s.key === fixStep) : -1;
+
   return (
     <div className={`relative mb-5 rounded-lg border bg-surface-1 px-5 py-4 ${borderColor}`}>
       <div className={`absolute inset-x-0 top-0 h-0.5 rounded-t-lg bg-gradient-to-r ${topBarColor}`} />
       <div className={`mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest ${labelColor}`}>
         <span className={`h-1.5 w-1.5 rounded-full ${pulseColor}`} style={{ animation: "crawl-pulse 1.5s infinite" }} />
-        {isScan ? "Scanning" : "AI Fixing"}
+        {isScan ? "Scanning" : fixMode === "ai" ? "AI Generating" : "Auto-fixing"}
       </div>
       <div className={`font-mono text-[13px] ${urlColor}`}>{urlPath}</div>
+
+      {/* Step progress (fix mode only) */}
+      {!isScan && fixStep && (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {steps.map((step, i) => {
+            const isDone = i < currentStepIdx;
+            const isActive = i === currentStepIdx;
+            const isPending = i > currentStepIdx;
+
+            return (
+              <div key={step.key} className="flex items-center gap-2">
+                <div className="flex h-4 w-4 items-center justify-center">
+                  {isDone && (
+                    <svg className="h-3 w-3 text-valid" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {isActive && (
+                    <span className={`h-2 w-2 rounded-full ${pulseColor}`} style={{ animation: "crawl-pulse 1.5s infinite" }} />
+                  )}
+                  {isPending && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-surface-3" />
+                  )}
+                </div>
+                <span className={`text-[12px] ${isActive ? "font-medium text-text-primary" : isDone ? "text-text-secondary" : "text-text-muted"}`}>
+                  {step.label}
+                  {isActive && fixStepDetail && (
+                    <span className="ml-1 text-text-muted">({fixStepDetail})</span>
+                  )}
+                  {isActive && (
+                    <span className="ml-1 inline-block animate-pulse text-fix-bright">...</span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -787,47 +915,71 @@ function PageList({
   }
 
   if (phase === "fixing" || phase === "interrupted_fix") {
-    // During fix: show all pages, with transitions for fixed ones
-    const fixedSoFar = pages.filter((p) => p.fixed_schema && ["valid", "warnings"].includes(p.status));
-    const stillNeedsFix = pages.filter((p) => ["errors", "warnings", "no_schema"].includes(p.status));
-    const alreadyValid = pages.filter((p) => p.status === "valid" && !p.fixed_schema);
-    const failed = pages.filter((p) => p.status === "failed");
+    // During fix: use fix_attempted_at to separate "processed" from "queued"
+    const fixedSoFar = pages.filter((p) => p.fix_attempted_at != null);
+    const stillNeedsFix = pages.filter((p) => !p.fix_attempted_at && ["errors", "warnings", "no_schema"].includes(p.status));
+    const alreadyValid = pages.filter((p) => p.status === "valid" && !p.fix_attempted_at);
+    const failed = pages.filter((p) => p.status === "failed" && !p.fix_attempted_at);
+
+    const doneCount = alreadyValid.length + fixedSoFar.length;
+    const queueCount = stillNeedsFix.length;
 
     return (
       <>
-        <div className="mb-2 pl-1 font-serif text-[11px] uppercase tracking-wider text-text-muted">
-          Pages ({pages.length})
-        </div>
-        <div className="mb-4 overflow-hidden rounded-lg border border-border">
-          {/* Already valid (untouched) */}
-          {alreadyValid.map((page) => (
-            <PageRow key={page.id} page={page} expanded={expandedPage === page.id} onToggle={() => onToggle(page.id)} />
-          ))}
-          {/* Fixed — show transition */}
-          {fixedSoFar.map((page) => (
-            <PageRow
-              key={page.id}
-              page={page}
-              expanded={expandedPage === page.id}
-              onToggle={() => onToggle(page.id)}
-              priorStatus={transitionMap.get(page.url)}
-            />
-          ))}
-          {/* Still needs fix */}
-          {stillNeedsFix.map((page) => (
-            <PageRow
-              key={page.id}
-              page={page}
-              expanded={expandedPage === page.id}
-              onToggle={() => onToggle(page.id)}
-              fixQueued={phase === "fixing"}
-            />
-          ))}
-          {/* Failed */}
-          {failed.map((page) => (
-            <PageRow key={page.id} page={page} expanded={expandedPage === page.id} onToggle={() => onToggle(page.id)} dimmed />
-          ))}
-        </div>
+        {/* Fixed / already valid */}
+        {doneCount > 0 && (
+          <>
+            <div className="mb-2 pl-1 font-serif text-[11px] uppercase tracking-wider text-text-muted">
+              Fixed ({doneCount})
+            </div>
+            <div className="mb-4 overflow-hidden rounded-lg border border-border">
+              {alreadyValid.map((page) => (
+                <PageRow key={page.id} page={page} expanded={expandedPage === page.id} onToggle={() => onToggle(page.id)} />
+              ))}
+              {fixedSoFar.map((page) => (
+                <PageRow
+                  key={page.id}
+                  page={page}
+                  expanded={expandedPage === page.id}
+                  onToggle={() => onToggle(page.id)}
+                  priorStatus={transitionMap.get(page.url)}
+                />
+              ))}
+            </div>
+          </>
+        )}
+        {/* Queued */}
+        {queueCount > 0 && (
+          <>
+            <div className="mb-2 pl-1 font-serif text-[11px] uppercase tracking-wider text-text-muted">
+              {phase === "interrupted_fix" ? `Remaining (${queueCount})` : `Queued (${queueCount})`}
+            </div>
+            <div className="mb-4 overflow-hidden rounded-lg border border-border">
+              {stillNeedsFix.map((page) => (
+                <PageRow
+                  key={page.id}
+                  page={page}
+                  expanded={expandedPage === page.id}
+                  onToggle={() => onToggle(page.id)}
+                  fixQueued={phase === "fixing"}
+                />
+              ))}
+            </div>
+          </>
+        )}
+        {/* Failed */}
+        {failed.length > 0 && (
+          <>
+            <div className="mb-2 pl-1 font-serif text-[11px] uppercase tracking-wider text-text-muted">
+              Failed ({failed.length})
+            </div>
+            <div className="mb-4 overflow-hidden rounded-lg border border-border">
+              {failed.map((page) => (
+                <PageRow key={page.id} page={page} expanded={expandedPage === page.id} onToggle={() => onToggle(page.id)} dimmed />
+              ))}
+            </div>
+          </>
+        )}
       </>
     );
   }
@@ -880,7 +1032,7 @@ function PageRow({
     urlPath = page.url;
   }
 
-  const isFixed = page.fixed_schema && ["valid", "warnings"].includes(page.status) && priorStatus;
+  const isFixed = page.fix_attempted_at != null && priorStatus;
 
   return (
     <div className={dimmed ? "opacity-40" : ""}>

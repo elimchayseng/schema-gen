@@ -19,16 +19,29 @@ import { refineAllRecommendations } from "@/lib/ai/refinement";
 import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 import type { ProcessMode, PageResult, PageStatus, ProcessedSchema } from "./types";
 
+export type ProgressStep =
+  | "fetching"
+  | "extracting"
+  | "validating"
+  | "ai_generating"
+  | "refining"
+  | "saving";
+
+export type ProgressCallback = (step: ProgressStep, detail?: string) => void;
+
 const PAGE_TIMEOUT = 15_000; // 15s per page to prevent one slow page from blocking the batch
 
 /**
  * Process a single page: fetch, extract JSON-LD, validate, and optionally AI-generate.
+ * Optional onProgress callback fires at each stage for real-time UI updates.
  */
 export async function processPage(
   url: string,
-  mode: ProcessMode
+  mode: ProcessMode,
+  onProgress?: ProgressCallback
 ): Promise<PageResult> {
   // Fetch page HTML with timeout
+  onProgress?.("fetching");
   let fetchResult;
   try {
     const controller = new AbortController();
@@ -61,6 +74,7 @@ export async function processPage(
   const finalUrl = fetchResult.finalUrl;
 
   // Extract JSON-LD blocks
+  onProgress?.("extracting");
   const extracted = extractJsonLd(html);
   const validParsed = extracted.filter((e) => !e.parseError && e.parsed !== null);
 
@@ -68,7 +82,7 @@ export async function processPage(
   if (validParsed.length === 0) {
     if (mode === "optimize") {
       // AI generate schemas for this page
-      return await generateForPage(url, finalUrl, html);
+      return await generateForPage(url, finalUrl, html, onProgress);
     }
     return {
       url,
@@ -80,6 +94,7 @@ export async function processPage(
   }
 
   // Validate and fix each schema
+  onProgress?.("validating");
   const processedSchemas: ProcessedSchema[] = [];
   const originals: Record<string, unknown>[] = [];
   const fixed: Record<string, unknown>[] = [];
@@ -121,7 +136,8 @@ export async function processPage(
   // In optimize mode, also run AI generation to improve schemas
   if (mode === "optimize" && (totalErrors > 0 || totalWarnings > 0)) {
     try {
-      const aiResult = await generateAndRefine(finalUrl, html);
+      onProgress?.("ai_generating");
+      const aiResult = await generateAndRefine(finalUrl, html, onProgress);
       if (aiResult) {
         // Merge AI-generated fixes into the result
         for (const rec of aiResult) {
@@ -167,10 +183,12 @@ export async function processPage(
 async function generateForPage(
   url: string,
   finalUrl: string,
-  html: string
+  html: string,
+  onProgress?: ProgressCallback
 ): Promise<PageResult> {
   try {
-    const recs = await generateAndRefine(finalUrl, html);
+    onProgress?.("ai_generating");
+    const recs = await generateAndRefine(finalUrl, html, onProgress);
     if (!recs || recs.length === 0) {
       return {
         url,
@@ -224,7 +242,11 @@ async function generateForPage(
  * Run the AI generation + refinement pipeline.
  * Returns validated recommendations or null on failure.
  */
-async function generateAndRefine(finalUrl: string, html: string) {
+async function generateAndRefine(
+  finalUrl: string,
+  html: string,
+  onProgress?: ProgressCallback
+) {
   const llmResult = await generateSchemas(html, finalUrl);
   if (!llmResult) return null;
 
@@ -235,6 +257,8 @@ async function generateAndRefine(finalUrl: string, html: string) {
   });
 
   if (llmResult.recommendations.length === 0) return null;
+
+  onProgress?.("refining", `${llmResult.recommendations.length} schemas`);
 
   const refined = await refineAllRecommendations(
     llmResult.recommendations,
