@@ -170,5 +170,6 @@ export async function POST(
     remaining: remaining ?? 0,
     crawlComplete,
     pages: pageResults,
-  } satisfies BatchResult);
+    processingPageUrl: pendingPages[0]?.url ?? null,
+  });
 }

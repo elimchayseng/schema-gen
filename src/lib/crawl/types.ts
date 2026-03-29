@@ -59,11 +59,24 @@ export interface CrawlJob {
   completed_at: string | null;
 }
 
+export type CrawlPhase =
+  | "scanning"
+  | "interrupted_scan"
+  | "scan_complete"
+  | "fixing"
+  | "interrupted_fix"
+  | "done";
+
 export interface CrawlStatusResponse {
   crawlId: string;
   status: CrawlJob["status"];
+  phase: CrawlPhase;
   totalUrls: number;
   processedUrls: number;
+  lastActivityAt: string | null;
+  lastProcessedUrl: string | null;
+  fixTotal: number;
+  fixProcessed: number;
   results: {
     valid: number;
     warnings: number;

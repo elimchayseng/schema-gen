@@ -65,8 +65,8 @@ describe("processPage", () => {
         {
           raw: '{"@type":"Product"}',
           parsed: { "@type": "Product", "@context": "https://schema.org", name: "Tee" },
-          parseError: null,
-          position: { start: 0, end: 100 },
+          parseError: undefined,
+          position: 0,
         },
       ]);
 
@@ -78,6 +78,7 @@ describe("processPage", () => {
       });
 
       mockFixSchema.mockReturnValue({
+        original: { "@type": "Product", "@context": "https://schema.org", name: "Tee" },
         fixed: { "@type": "Product", "@context": "https://schema.org", name: "Tee" },
         fixes: [],
         validationBefore: {
@@ -109,8 +110,8 @@ describe("processPage", () => {
         {
           raw: '{"@type":"Product"}',
           parsed: { "@type": "Product" },
-          parseError: null,
-          position: { start: 0, end: 50 },
+          parseError: undefined,
+          position: 0,
         },
       ]);
 
@@ -122,6 +123,7 @@ describe("processPage", () => {
       });
 
       mockFixSchema.mockReturnValue({
+        original: { "@type": "Product" },
         fixed: { "@type": "Product" },
         fixes: [],
         validationBefore: {
@@ -163,7 +165,7 @@ describe("processPage", () => {
 
     it("returns failed status on fetch failure", async () => {
       mockFetchPage.mockResolvedValue({
-        html: null,
+        html: "",
         finalUrl: "https://example.com/broken",
         statusCode: 403,
         error: "Forbidden",
@@ -195,14 +197,14 @@ describe("processPage", () => {
         {
           raw: '{"@type":"Product"}',
           parsed: { "@type": "Product", "@context": "https://schema.org", name: "A" },
-          parseError: null,
-          position: { start: 0, end: 50 },
+          parseError: undefined,
+          position: 0,
         },
         {
           raw: '{"@type":"Organization"}',
           parsed: { "@type": "Organization", "@context": "https://schema.org", name: "B" },
-          parseError: null,
-          position: { start: 100, end: 150 },
+          parseError: undefined,
+          position: 100,
         },
       ]);
 
@@ -212,6 +214,7 @@ describe("processPage", () => {
       });
 
       mockFixSchema.mockImplementation((schema) => ({
+        original: schema as Record<string, unknown>,
         fixed: schema as Record<string, unknown>,
         fixes: [],
         validationBefore: { valid: true, errors: [], warnings: [], summary: { errorCount: 0, warningCount: 0, schemaType: "Product", validationTimeMs: 1 } },

@@ -34,6 +34,13 @@ export async function POST(
     return NextResponse.json({ error: "Crawl not found" }, { status: 404 });
   }
 
+  // Count total fixable pages (for progress tracking)
+  const { count: totalFixable } = await supabase
+    .from("page_schemas")
+    .select("id", { count: "exact", head: true })
+    .eq("crawl_id", crawlId)
+    .in("status", ["errors", "warnings", "no_schema"]);
+
   // Get pages that need fixing (errors, warnings, no_schema)
   const { data: pagesToFix } = await supabase
     .from("page_schemas")
@@ -47,8 +54,14 @@ export async function POST(
       processed: 0,
       remaining: 0,
       fixComplete: true,
+      fixingPageUrl: null,
+      priorStatus: null,
+      fixTotal: 0,
+      fixProcessed: 0,
     });
   }
+
+  const priorStatus = pagesToFix[0].status;
 
   // Process each page in optimize mode
   const results = [];
@@ -117,16 +130,35 @@ export async function POST(
     }
   }
 
-  // Count remaining pages that still need fixing
-  const { count: remaining } = await supabase
+  // Count remaining pages that still need fixing + peek at the next one
+  const { data: remainingPages } = await supabase
     .from("page_schemas")
-    .select("id", { count: "exact", head: true })
+    .select("id, url")
     .eq("crawl_id", crawlId)
-    .in("status", ["errors", "warnings", "no_schema"]);
+    .in("status", ["errors", "warnings", "no_schema"])
+    .order("url", { ascending: true })
+    .limit(1);
+
+  const remaining = remainingPages?.length
+    ? await supabase
+        .from("page_schemas")
+        .select("id", { count: "exact", head: true })
+        .eq("crawl_id", crawlId)
+        .in("status", ["errors", "warnings", "no_schema"])
+        .then((r) => r.count ?? 0)
+    : 0;
+
+  // fixProcessed = totalFixable - remaining
+  const fixProcessedCount = (totalFixable ?? 0) - remaining;
 
   return NextResponse.json({
     processed: results.length,
-    remaining: remaining ?? 0,
-    fixComplete: (remaining ?? 0) === 0,
+    remaining,
+    fixComplete: remaining === 0,
+    fixingPageUrl: pagesToFix[0]?.url ?? null,
+    nextFixingPageUrl: remainingPages?.[0]?.url ?? null,
+    priorStatus,
+    fixTotal: totalFixable ?? 0,
+    fixProcessed: fixProcessedCount,
   });
 }
