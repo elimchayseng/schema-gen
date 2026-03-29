@@ -24,14 +24,16 @@ Most ecommerce sites have broken, incomplete, or missing structured data. Fixing
 1. **Scan** any page and extract existing JSON-LD
 2. **Validate** against schema.org rules and auto-fix common errors
 3. **Generate** new schemas using AI based on actual page content
-4. **Edit** schemas with real-time validation
-6. **Deploy** copy-paste-ready JSON-LD scripts
+4. **Crawl** an entire site via sitemap, validate every page, and batch-fix all schemas
+5. **Edit** schemas with real-time validation
+6. **Export** fixed schemas as a ZIP organized by page path
 
 ## Key features
 
 - **30+ schema types** validated: Product, Article, FAQPage, LocalBusiness, BreadcrumbList, Event, Review, and more
 - **Auto-fixer** corrects misplaced properties, bad enum formats, missing @context, and other common mistakes
 - **AI refinement loop** generates schemas, validates them, refines, and validates again with a regression guard that rejects changes that make things worse
+- **Site-wide crawl** scans every page from sitemap.xml, validates existing schemas, and batch-fixes issues with real-time SSE progress streaming
 - **Live editor** with inline validation errors and warnings
 
 ## Built with
