@@ -1,0 +1,157 @@
+import { NextResponse } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
+import type { CrawlStatusResponse, CrawlPhase } from "@/lib/crawl/types";
+
+const STALE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+
+/**
+ * GET /api/crawl/[id] — Get crawl status, phase, and result counts.
+ */
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Fetch crawl job
+  const { data: crawl, error: crawlError } = await supabase
+    .from("crawl_jobs")
+    .select("*, sites!inner(user_id)")
+    .eq("id", id)
+    .eq("sites.user_id", user.id)
+    .single();
+
+  if (crawlError || !crawl) {
+    return NextResponse.json({ error: "Crawl not found" }, { status: 404 });
+  }
+
+  // Count page statuses
+  const { data: statusCounts } = await supabase
+    .from("page_schemas")
+    .select("status")
+    .eq("crawl_id", id);
+
+  const counts = {
+    valid: 0,
+    warnings: 0,
+    errors: 0,
+    no_schema: 0,
+    failed: 0,
+    pending: 0,
+    processing: 0,
+  };
+
+  if (statusCounts) {
+    for (const row of statusCounts) {
+      const s = row.status as keyof typeof counts;
+      if (s in counts) counts[s]++;
+    }
+  }
+
+  // Get last activity timestamp and last processed URL
+  const { data: lastActivity } = await supabase
+    .from("page_schemas")
+    .select("processed_at, url")
+    .eq("crawl_id", id)
+    .not("processed_at", "is", null)
+    .order("processed_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  const lastActivityAt = lastActivity?.processed_at ?? null;
+  const lastProcessedUrl = lastActivity?.url ?? null;
+  const isStale =
+    lastActivityAt != null &&
+    Date.now() - new Date(lastActivityAt).getTime() > STALE_THRESHOLD_MS;
+
+  const needsFix = counts.errors + counts.warnings + counts.no_schema;
+  const hasPending = counts.pending + counts.processing > 0;
+
+  // Stable fix progress: count attempted pages + remaining unattempted fixable pages
+  const { count: fixedCount } = await supabase
+    .from("page_schemas")
+    .select("id", { count: "exact", head: true })
+    .eq("crawl_id", id)
+    .not("fix_attempted_at", "is", null);
+
+  const { count: remainingFixable } = await supabase
+    .from("page_schemas")
+    .select("id", { count: "exact", head: true })
+    .eq("crawl_id", id)
+    .in("status", ["errors", "warnings", "no_schema"])
+    .is("fix_attempted_at", null);
+
+  const fixProcessed = fixedCount ?? 0;
+  const fixTotal = fixProcessed + (remainingFixable ?? 0);
+
+  // Derive phase
+  let phase: CrawlPhase;
+
+  if (hasPending) {
+    if (isStale || counts.processing === 0) {
+      phase = "interrupted_scan";
+    } else {
+      phase = "scanning";
+    }
+  } else if (crawl.status === "running" && !hasPending) {
+    phase = "scan_complete";
+  } else if (crawl.status === "completed") {
+    if (needsFix > 0) {
+      if (counts.processing > 0 && !isStale) {
+        phase = "fixing";
+      } else if (counts.processing > 0 && isStale) {
+        phase = "interrupted_fix";
+      } else if (fixProcessed > 0 && (remainingFixable ?? 0) > 0) {
+        phase = "interrupted_fix";
+      } else if (fixProcessed > 0) {
+        phase = "done";
+      } else {
+        phase = "scan_complete";
+      }
+    } else {
+      phase = "done";
+    }
+  } else {
+    phase = hasPending ? "scanning" : "done";
+  }
+
+  const response: CrawlStatusResponse = {
+    crawlId: id,
+    status: crawl.status,
+    phase,
+    totalUrls: crawl.total_urls,
+    processedUrls: crawl.processed_urls,
+    lastActivityAt,
+    lastProcessedUrl,
+    fixTotal,
+    fixProcessed,
+    results: {
+      valid: counts.valid,
+      warnings: counts.warnings,
+      errors: counts.errors,
+      no_schema: counts.no_schema,
+      failed: counts.failed,
+      pending: counts.pending + counts.processing,
+    },
+  };
+
+  // Also fetch page details
+  const { data: pageDetails } = await supabase
+    .from("page_schemas")
+    .select("id, url, status, original_schema, fixed_schema, validation_results, error_reason, fix_attempted_at")
+    .eq("crawl_id", id)
+    .order("url", { ascending: true });
+
+  return NextResponse.json({
+    ...response,
+    pages: pageDetails ?? [],
+  });
+}
