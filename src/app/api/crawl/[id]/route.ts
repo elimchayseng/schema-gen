@@ -75,6 +75,23 @@ export async function GET(
   const needsFix = counts.errors + counts.warnings + counts.no_schema;
   const hasPending = counts.pending + counts.processing > 0;
 
+  // Stable fix progress: count attempted pages + remaining unattempted fixable pages
+  const { count: fixedCount } = await supabase
+    .from("page_schemas")
+    .select("id", { count: "exact", head: true })
+    .eq("crawl_id", id)
+    .not("fix_attempted_at", "is", null);
+
+  const { count: remainingFixable } = await supabase
+    .from("page_schemas")
+    .select("id", { count: "exact", head: true })
+    .eq("crawl_id", id)
+    .in("status", ["errors", "warnings", "no_schema"])
+    .is("fix_attempted_at", null);
+
+  const fixProcessed = fixedCount ?? 0;
+  const fixTotal = fixProcessed + (remainingFixable ?? 0);
+
   // Derive phase
   let phase: CrawlPhase;
 
@@ -92,6 +109,10 @@ export async function GET(
         phase = "fixing";
       } else if (counts.processing > 0 && isStale) {
         phase = "interrupted_fix";
+      } else if (fixProcessed > 0 && (remainingFixable ?? 0) > 0) {
+        phase = "interrupted_fix";
+      } else if (fixProcessed > 0) {
+        phase = "done";
       } else {
         phase = "scan_complete";
       }
@@ -101,23 +122,6 @@ export async function GET(
   } else {
     phase = hasPending ? "scanning" : "done";
   }
-
-  // Stable fix progress: count attempted pages + remaining unattempted fixable pages
-  const { count: fixedCount } = await supabase
-    .from("page_schemas")
-    .select("id", { count: "exact", head: true })
-    .eq("crawl_id", id)
-    .not("fix_attempted_at", "is", null);
-
-  const { count: remainingFixable } = await supabase
-    .from("page_schemas")
-    .select("id", { count: "exact", head: true })
-    .eq("crawl_id", id)
-    .in("status", ["errors", "warnings", "no_schema"])
-    .is("fix_attempted_at", null);
-
-  const fixProcessed = fixedCount ?? 0;
-  const fixTotal = fixProcessed + (remainingFixable ?? 0);
 
   const response: CrawlStatusResponse = {
     crawlId: id,
