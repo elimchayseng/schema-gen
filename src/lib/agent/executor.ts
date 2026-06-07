@@ -1,0 +1,69 @@
+/**
+ * Executor (plan §3 steps 3–4). For one planned task: produce a candidate
+ * (this is the ONLY place the LLM runs — inside processPage "optimize", which
+ * encapsulates generate + refine), then gate it deterministically and stage a
+ * snippet entry. Dry-run: nothing is written to Shopify (that is Phase 3).
+ */
+import { processPage } from "@/lib/crawl/process-page";
+import { urlToTemplateTarget, type SnippetEntry } from "@/lib/shopify/snippet";
+import { runGates } from "./gates";
+import { gatesPassed } from "./types";
+import type { ActionRecord, Goal, PlannedTask } from "./types";
+
+export interface ExecutedTask {
+  url: string;
+  satisfied: boolean;
+  action: ActionRecord;
+  /** Snippet entry to stage, when gates pass and the URL maps to a template. */
+  entry: SnippetEntry | null;
+}
+
+export async function executeTask(
+  goal: Goal,
+  task: PlannedTask
+): Promise<ExecutedTask> {
+  // optimize = extract -> validate -> fix -> AI generate -> refine.
+  const result = await processPage(task.url, "optimize");
+  const candidates = (result.fixedSchemas ?? []) as Record<string, unknown>[];
+
+  const gates = runGates({
+    candidates,
+    requireTypes: goal.target.requireTypes,
+    minOutcome: goal.target.minOutcome,
+    beforeErrorCount: task.beforeErrorCount,
+    beforeHadSchema: task.beforeHadSchema,
+  });
+  const ok = gatesPassed(gates);
+
+  const target = urlToTemplateTarget(task.url);
+  const entry: SnippetEntry | null =
+    ok && target
+      ? {
+          template: target.template,
+          handle: target.handle,
+          jsonld: candidates.length === 1 ? candidates[0] : candidates,
+        }
+      : null;
+
+  // Distinguish a clean gate rejection from an upstream processing/AI failure
+  // (processPage swallows AI errors and returns errorReason rather than throwing)
+  // so the audit row records *why* a page didn't stage.
+  const outcome = ok
+    ? "staged"
+    : result.errorReason
+      ? `processing_failed: ${result.errorReason}`
+      : "gate_failed";
+
+  const action: ActionRecord = {
+    url: task.url,
+    action: task.kind === "generate" ? "generate" : "fix",
+    schemaBefore: result.originalSchemas,
+    schemaAfter: candidates,
+    gates,
+    outcome,
+    writeTarget: null, // dry-run: nothing written live
+    costUsd: 0, // cost accounting lands in Phase 3
+  };
+
+  return { url: task.url, satisfied: ok, action, entry };
+}
