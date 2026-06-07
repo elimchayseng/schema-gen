@@ -1,0 +1,132 @@
+import { describe, it, expect } from "vitest";
+import {
+  renderSchemaGenSnippet,
+  urlToTemplateTarget,
+  type SnippetEntry,
+} from "../snippet";
+
+const PRODUCT_JSONLD = {
+  "@context": "https://schema.org",
+  "@type": "Product",
+  name: "Blue Widget",
+  offers: {
+    "@type": "Offer",
+    price: "19.99",
+    priceCurrency: "USD",
+    availability: "https://schema.org/InStock",
+  },
+};
+
+/** Raw text inside the first ld+json script block. */
+function scriptBody(snippet: string): string {
+  const m = snippet.match(
+    /<script type="application\/ld\+json">\n([\s\S]*?)\n<\/script>/
+  );
+  if (!m) throw new Error("no ld+json script found");
+  return m[1];
+}
+
+/** Parse the embedded JSON-LD. The \uXXXX escapes are valid JSON, so JSON.parse restores them. */
+function extractJsonLd(snippet: string): unknown {
+  return JSON.parse(scriptBody(snippet));
+}
+
+describe("renderSchemaGenSnippet", () => {
+  it("renders a product entry with correct, parseable JSON-LD", () => {
+    const entries: SnippetEntry[] = [
+      { template: "product", handle: "blue-widget", jsonld: PRODUCT_JSONLD },
+    ];
+    const out = renderSchemaGenSnippet(entries);
+
+    expect(out).toContain(
+      "{%- if template contains 'product' and product.handle == 'blue-widget' -%}"
+    );
+    expect(extractJsonLd(out)).toEqual(PRODUCT_JSONLD);
+  });
+
+  it("omits the handle clause when no handle is given", () => {
+    const out = renderSchemaGenSnippet([
+      { template: "index", jsonld: { "@type": "WebSite" } },
+    ]);
+    expect(out).toContain("{%- if template contains 'index' -%}");
+    expect(out).not.toContain(".handle ==");
+  });
+
+  it("escapes < so a string can't break out of the <script> tag", () => {
+    const out = renderSchemaGenSnippet([
+      { template: "page", handle: "x", jsonld: { evil: "</script><x>" } },
+    ]);
+    const body = scriptBody(out);
+    expect(body).not.toContain("</script>");
+    expect(body).toContain("\\u003c");
+    expect(extractJsonLd(out)).toEqual({ evil: "</script><x>" });
+  });
+
+  it("neutralizes Liquid so a payload value can't inject template code", () => {
+    // The classic {% raw %} breakout + server-side template injection attempt.
+    const evil = { note: "{% endraw %}{{ shop.metafields.secret }}{% raw %}" };
+    const out = renderSchemaGenSnippet([
+      { template: "page", handle: "x", jsonld: evil },
+    ]);
+    const body = scriptBody(out);
+    // no live Liquid openers survive in the payload
+    expect(body).not.toContain("{{");
+    expect(body).not.toContain("{%");
+    // and the data still round-trips intact
+    expect(extractJsonLd(out)).toEqual(evil);
+  });
+
+  it("rejects an invalid handle rather than emitting unsafe Liquid", () => {
+    expect(() =>
+      renderSchemaGenSnippet([
+        { template: "product", handle: "x' or template contains 'cart", jsonld: {} },
+      ])
+    ).toThrow(/Invalid Shopify handle/);
+  });
+
+  it("rejects an invalid template", () => {
+    expect(() =>
+      renderSchemaGenSnippet([{ template: "{% evil %}", jsonld: {} }])
+    ).toThrow(/Invalid Shopify template/);
+  });
+
+  it("renders one guarded block per entry", () => {
+    const out = renderSchemaGenSnippet([
+      { template: "product", handle: "a", jsonld: {} },
+      { template: "product", handle: "b", jsonld: {} },
+    ]);
+    expect(out.match(/{%- if /g)).toHaveLength(2);
+    expect(out.match(/{%- endif -%}/g)).toHaveLength(2);
+  });
+
+  it("returns only the managed header for no entries", () => {
+    const out = renderSchemaGenSnippet([]);
+    expect(out).toContain("SchemaGen managed snippet");
+    expect(out).not.toContain("{%- if");
+  });
+});
+
+describe("urlToTemplateTarget", () => {
+  it.each([
+    ["https://shop.com/products/blue-widget", { template: "product", handle: "blue-widget" }],
+    ["https://shop.com/collections/sale", { template: "collection", handle: "sale" }],
+    ["https://shop.com/collections/sale/products/blue-widget", { template: "product", handle: "blue-widget" }],
+    ["https://shop.com/pages/about", { template: "page", handle: "about" }],
+    ["https://shop.com/blogs/news/my-post", { template: "article", handle: "my-post" }],
+    ["https://shop.com/", { template: "index" }],
+    ["https://shop.com", { template: "index" }],
+  ])("maps %s", (url, expected) => {
+    expect(urlToTemplateTarget(url)).toEqual(expected);
+  });
+
+  it("returns null for unknown paths", () => {
+    expect(urlToTemplateTarget("https://shop.com/cart")).toBeNull();
+  });
+
+  it("accepts a bare path", () => {
+    expect(urlToTemplateTarget("/products/x")).toEqual({
+      template: "product",
+      handle: "x",
+    });
+  });
+});
