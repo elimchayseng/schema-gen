@@ -12,7 +12,12 @@
  * Asset writes (PUT) and publish are idempotent, so retrying transient 5xx is
  * safe. Timeouts are NOT retried here — they bubble so the caller decides.
  */
-import { getOfflineToken, getShopifyConfig } from "./config";
+import {
+  canMintTokens,
+  getOfflineToken,
+  getShopifyConfig,
+  invalidateTokenCache,
+} from "./config";
 import { assertShopifyUrl } from "./ssrf";
 import { shopifyLog } from "./logger";
 
@@ -104,12 +109,13 @@ export async function shopifyFetch<T>(
 ): Promise<T> {
   const cfg: RetryConfig = { ...DEFAULT_RETRY, ...opts.retry };
   const config = getShopifyConfig();
-  const token = await getOfflineToken(config.shop);
+  let token = await getOfflineToken(config.shop);
   const url = buildUrl(config.baseUrl, path, opts.query);
   assertShopifyUrl(url); // SSRF guard on the exact URL we are about to hit
   const method = opts.method ?? "GET";
 
   let attempt = 0;
+  let reauthed = false;
   // Loop: returns on success, throws on hard failure or exhausted retries.
   for (;;) {
     const controller = new AbortController();
@@ -141,6 +147,28 @@ export async function shopifyFetch<T>(
       throw err; // network/other errors bubble unmodified
     }
     clearTimeout(timer);
+
+    // Token expired/invalid: re-mint once and retry. Only when we can actually
+    // mint (a static token can't be refreshed) and only once (no auth loop).
+    if (res.status === 401 && canMintTokens() && !reauthed) {
+      shopifyLog("warn", "Shopify 401, re-minting token and retrying once", {
+        path,
+      });
+      invalidateTokenCache(config.shop);
+      try {
+        token = await getOfflineToken(config.shop);
+      } catch (err) {
+        // Keep the ShopifyError contract: a failed re-mint surfaces as a 401
+        // ShopifyError, not a bare Error callers can't catch via instanceof.
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ShopifyError(
+          `Re-auth failed after 401: ${method} ${path}: ${msg}`,
+          401
+        );
+      }
+      reauthed = true;
+      continue;
+    }
 
     if (isRetryableStatus(res.status)) {
       if (attempt >= cfg.maxRetries) {

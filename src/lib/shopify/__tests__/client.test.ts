@@ -5,6 +5,7 @@ import {
   shopifyFetch,
   type RetryConfig,
 } from "../client";
+import { invalidateTokenCache } from "../config";
 
 // Fast, deterministic retry config for tests: no real waiting.
 const fastRetry: Partial<RetryConfig> = {
@@ -230,5 +231,106 @@ describe("shopifyFetch", () => {
     const err = new ShopifyError("boom", 500);
     expect(err).toBeInstanceOf(Error);
     expect(err.status).toBe(500);
+  });
+});
+
+describe("shopifyFetch — 401 re-auth (mintable creds)", () => {
+  const saved = { ...process.env };
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    process.env.SHOPIFY_SHOP = "reauth-store.myshopify.com";
+    process.env.SHOPIFY_API_VERSION = "2025-01";
+    process.env.SHOPIFY_APP_KEY = "cid";
+    process.env.SHOPIFY_APP_SECRET = "csecret";
+    delete process.env.SHOPIFY_OFFLINE_TOKEN; // force the mint path
+    invalidateTokenCache("reauth-store.myshopify.com");
+    mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    process.env = { ...saved };
+  });
+
+  const isMint = (url: string) => url.includes("/admin/oauth/access_token");
+
+  it("re-mints once on a 401 then succeeds", async () => {
+    let mints = 0;
+    let apiCalls = 0;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (isMint(url)) {
+        mints += 1;
+        return jsonResponse({ access_token: `shpat_${mints}`, expires_in: 86399 });
+      }
+      apiCalls += 1;
+      return apiCalls === 1
+        ? jsonResponse({ errors: "unauthorized" }, { status: 401 })
+        : jsonResponse({ theme: { id: 1 } });
+    });
+
+    const result = await shopifyFetch<{ theme: { id: number } }>(
+      "/themes/1.json",
+      { retry: fastRetry }
+    );
+    expect(result.theme.id).toBe(1);
+    expect(mints).toBe(2); // initial mint + one re-mint after the 401
+    expect(apiCalls).toBe(2); // 401, then 200 on retry
+  });
+
+  it("retries the 401 with the freshly minted token (not the stale one)", async () => {
+    let mints = 0;
+    const apiTokens: string[] = [];
+    mockFetch.mockImplementation(async (url: string, init: RequestInit) => {
+      if (isMint(url)) {
+        mints += 1;
+        return jsonResponse({ access_token: `shpat_${mints}`, expires_in: 86399 });
+      }
+      const headers = init.headers as Record<string, string>;
+      apiTokens.push(headers["X-Shopify-Access-Token"]);
+      return apiTokens.length === 1
+        ? jsonResponse({}, { status: 401 })
+        : jsonResponse({ ok: true });
+    });
+
+    await shopifyFetch("/themes/1.json", { retry: fastRetry });
+    expect(apiTokens).toEqual(["shpat_1", "shpat_2"]); // stale, then re-minted
+  });
+
+  it("surfaces a failed re-mint as a ShopifyError (contract preserved)", async () => {
+    let mints = 0;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (isMint(url)) {
+        mints += 1;
+        // initial mint ok; the re-mint after the 401 fails
+        return mints === 1
+          ? jsonResponse({ access_token: "shpat_1", expires_in: 86399 })
+          : jsonResponse({ error: "invalid_client" }, { status: 401 });
+      }
+      return jsonResponse({}, { status: 401 }); // API keeps 401-ing
+    });
+
+    await expect(
+      shopifyFetch("/themes/1.json", { retry: fastRetry })
+    ).rejects.toMatchObject({ name: "ShopifyError", status: 401 });
+  });
+
+  it("does not loop: a persistent 401 throws after a single re-auth", async () => {
+    let mints = 0;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (isMint(url)) {
+        mints += 1;
+        return jsonResponse({ access_token: "shpat_x", expires_in: 86399 });
+      }
+      return jsonResponse({ errors: "unauthorized" }, { status: 401 });
+    });
+
+    await expect(
+      shopifyFetch("/themes/1.json", { retry: fastRetry })
+    ).rejects.toMatchObject({ name: "ShopifyError", status: 401 });
+    expect(mints).toBe(2); // initial + exactly one re-mint, then give up
   });
 });

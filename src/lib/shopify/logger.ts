@@ -15,6 +15,8 @@ const SENSITIVE_KEYS = [
   "authorization",
   "password",
   "secret",
+  "client_secret",
+  "client_id",
 ];
 
 const REDACTED = "[REDACTED]";
