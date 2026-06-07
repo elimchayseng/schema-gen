@@ -102,8 +102,23 @@ Goals, runs, and actions are persisted so a run is resumable and fully auditable
 
 You chose direct theme injection. Do it the *low-blast-radius* way — inject a single include, not a wall of JSON-LD into `theme.liquid` itself.
 
-**App + auth**
-- Shopify Partner app, OAuth, **offline** access token. Scopes: `read_themes`, `write_themes`, `read_products`. Store the encrypted token per shop in Supabase.
+**App + auth — two-stage token strategy**
+
+The Asset API always authenticates with an Admin API access token (`shpat_…`) in the `X-Shopify-Access-Token` header. The *only* thing that changes between dev-store testing and full distribution is **how that token is obtained**, captured behind the single `getOfflineToken(shop)` seam in `lib/shopify/config.ts`. Stage A is a strict subset of Stage B; nothing built in A is thrown away.
+
+> **Finding (2026-06-06): the token is short-lived, not a classic offline token.** The store-admin "Develop apps" custom-app route (which used to hand out a durable `shpat_…` offline token) is no longer available on this org. Apps are now created in the new **`dev.shopify.com` developer dashboard**, which exposes only a **Client ID + Client secret** and issues tokens via the OAuth **`client_credentials`** grant:
+> ```bash
+> curl -X POST "https://<shop>.myshopify.com/admin/oauth/access_token" \
+>   -H "Content-Type: application/x-www-form-urlencoded" \
+>   -d "grant_type=client_credentials" \
+>   -d "client_id=$SHOPIFY_APP_KEY" -d "client_secret=$SHOPIFY_APP_SECRET"
+> ```
+> The returned token **expires in ~24h** (`expires_in: 86399`) — it is **not** durable. Prerequisite: the app must already be **installed on the shop** (an un-installed app returns `400 app_not_installed`).
+
+- **Stage A — dev-store testing (current).** Install the `dev.shopify.com` app on the dev store, then mint a token with the `client_credentials` curl above and place it in `SHOPIFY_OFFLINE_TOKEN`. Because the token expires in ~24h, treat the env value as a short-lived convenience for a single test session — for anything beyond that, use mint-on-demand (below). This exercises the *identical* write-back code path that ships.
+- **Stage B — distribution (multi-merchant).** Same `dev.shopify.com` app, installed per merchant. Implement OAuth install + callback as **Next.js API routes** (`/api/shopify/auth`, `/api/shopify/callback`) — do **not** scaffold the Shopify CLI's Remix app template; SchemaGen is the app. Persist **per-shop credentials/install state**, not tokens.
+- **Token lifecycle — mint-on-demand (replaces "store the encrypted token").** Because `client_credentials` tokens expire in ~24h, `getOfflineToken(shop)` should **exchange `client_id`/`client_secret` → token at runtime, cache it in-memory ~23h, and re-mint on expiry or on any `401`** — rather than persisting a long-lived token. This means the durable per-shop secret to store is the **install credential**, and tokens refresh themselves. (This supersedes §8's `encrypted offline token` storage assumption.)
+- **Shopify CLI's role.** Stage A needs no CLI. For Stage B the CLI manages `shopify.app.toml` as config-as-code (scopes, app URLs, webhooks), `shopify app deploy` versions that config, and `shopify app dev` provides a tunnel for local OAuth testing. It never owns the web server — the Next.js app does.
 - Use the Asset API (REST `PUT /admin/api/<v>/themes/{id}/assets.json`, or GraphQL `themeFilesUpsert`).
 
 **Injection strategy (idempotent, removable)**
@@ -129,6 +144,8 @@ Every candidate passes all hard gates before commit. Cheapest checks first; fail
 | **L2** | Rich-results eligibility (Product needs offers/price/availability, etc.) | `lib/validation/rich-results.ts` | **hard** for `minOutcome: rich_results_eligible` |
 | **L3** | Regression guard — candidate is not worse than current live | regression logic already in `refineAndValidate` | **hard** |
 | **L4** | Post-write live verify — re-fetch rendered preview, re-extract, confirm JSON-LD present + still valid | `fetchPage` + `extractJsonLd` + `validateSchema` | **hard**, triggers rollback |
+
+> **Finding (2026-06-06): the Asset API is read-after-write eventually consistent.** A GET issued immediately after a successful PUT can return the *stale* value (verified in the Phase 0 integration test — the marker took several seconds to appear). L4 must therefore **poll** the re-fetch with a timeout, not read once, or it will produce false rollbacks. The Phase 0/1 integration tests already use a `waitForAsset(predicate, timeout)` helper that L4 should reuse.
 | **L5** | Cost / iteration / error budget | run accounting | circuit breaker |
 | **L6** | LLM-as-judge "does this match page intent?" | optional model call | **soft only** — logged, never blocks |
 
@@ -153,6 +170,8 @@ Auto-applying to a live theme is the riskiest combination you picked. These guar
 ## 8. Data model (additions)
 
 Two new tables; reuse existing `sites` / `page_schemas`.
+
+> **Note (see §5 token lifecycle):** tokens from the `dev.shopify.com` `client_credentials` grant expire in ~24h, so there is **no durable offline token to persist**. Store the per-shop **install credential** instead and mint tokens on demand. An encrypted-token table is therefore unnecessary for Stage B.
 
 ```sql
 -- one row per goal execution
@@ -195,7 +214,9 @@ Sequenced so each phase ships something testable on a dev store. Use a Shopify *
 
 **Phase 5 — Hardening.** Concurrency caps, idempotent resume, LLM response caching + sitemap filtering (already in `TODOS.md`), per-shop rate-limit handling, optional L6 soft judge.
 
-A focused engineer gets Phases 0–2 working in dry-run within roughly a week; Phase 3 is what earns the right to flip off dry-run.
+**Phase 6 — Token lifecycle & auto re-auth.** *Elevated priority — implement before any Phase 3 live (non-dry-run) run, because the `client_credentials` token expires in ~24h and a single run can outlive it.* Turn the §5 mint-on-demand design into code: `getOfflineToken(shop)` exchanges `client_id`/`client_secret` → token at runtime, caches it with `expires_at`, and re-mints proactively (within a buffer of expiry) or reactively (on a `401`). `shopifyFetch` invalidates the cache and retries **once** on a `401`. See `docs/agent/phase-6-token-refresh.md`. Acceptance: with a deliberately-expired cache, a call auto-mints and succeeds with no manual token paste; a mid-run `401` triggers exactly one re-mint + retry (no loops); the token is never logged. Replaces the Phase 0 env-only stopgap and supersedes §8's "encrypted offline token" storage.
+
+A focused engineer gets Phases 0–2 working in dry-run within roughly a week; Phase 3 is what earns the right to flip off dry-run, and Phase 6 must land before Phase 3 runs live so a long run can't die on token expiry. Phases 0 and 1 are complete and verified live against the dev store (read/write/rollback + snippet install round-trip).
 
 ---
 

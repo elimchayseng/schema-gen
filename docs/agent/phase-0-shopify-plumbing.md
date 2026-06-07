@@ -12,7 +12,7 @@ Prove SchemaGen can read a Shopify theme, write a no-op marker block, verify it,
 
 ## Scope (from plan §5, §9)
 
-- OAuth install flow; offline access token storage. Scopes: `read_themes`, `write_themes`, `read_products`. Store the **encrypted** token per shop in Supabase. Never log tokens.
+- **Token acquisition (Stage A — dev store).** The old store-admin custom-app route is gone on this org; the app now lives in the **`dev.shopify.com` dashboard** and issues tokens via the `client_credentials` grant (`client_id`/`client_secret` → token), with the app **installed on the shop** first. Mint a token and put it in `SHOPIFY_OFFLINE_TOKEN`. **The token expires in ~24h** — for ongoing use, `getOfflineToken(shop)` should mint-on-demand and cache, not read a static token (see plan §5 token lifecycle). Multi-merchant distribution is **Stage B / Phase 4** and swaps only the body of `getOfflineToken(shop)`. Never log tokens.
 - Asset API client in `lib/shopify/` exporting: `themeGet`, `themeDuplicate`, `assetGet`, `assetUpsert`, `themePublish`.
 - `theme_backups` table + restore (rollback token). See data model §8.
 
