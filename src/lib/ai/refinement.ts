@@ -31,7 +31,7 @@ export async function refineAndValidate(
   maxPasses: number = MAX_REFINEMENT_PASSES
 ): Promise<RefinementResult> {
   // Initial fix + validate
-  let fixResult = fixAndValidateAIOutputWithContext(
+  const fixResult = fixAndValidateAIOutputWithContext(
     JSON.stringify(rec.jsonld),
     { pageUrl }
   );

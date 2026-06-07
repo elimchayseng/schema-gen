@@ -34,3 +34,12 @@ The following [impeccable](https://github.com/pbakaus/impeccable) slash-command 
 - `/extract` — Pull into reusable components
 - `/adapt` — Adapt for different devices
 - `/onboard` — Design onboarding flows
+
+## Agent build rules
+- Source of truth: AGENT_IMPLEMENTATION_PLAN.md. Current task: docs/agent/phase-N-*.md.
+- Definition of done for a phase: `npm run verify` is green AND acceptance criteria in the phase file pass.
+- The LLM is never a quality gate. All schema judgment goes through lib/validation.
+- Never call the live Shopify API in unit tests. Mock the Asset API. The single
+  integration test is gated behind RUN_SHOPIFY_INTEGRATION=1 and skipped otherwise.
+- Work on branch feat/agent. Commit per phase. Do not edit a live/published theme — only SHOPIFY_TEST_THEME_ID or a duplicate.
+- After implementing, run `npm run verify` and fix until green before reporting done.
