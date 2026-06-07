@@ -14,6 +14,30 @@
 import { describe, it, expect } from "vitest";
 import { assetGet, assetUpsert } from "../assets";
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Poll assetGet until `predicate(value)` holds or the timeout elapses. The
+ * Shopify Asset API is read-after-write eventually consistent: a GET right after
+ * a PUT can return the stale value. Phase 3's L4 live-verify relies on the same
+ * polling shape.
+ */
+async function waitForAsset(
+  themeId: number,
+  key: string,
+  predicate: (value: string) => boolean,
+  timeoutMs = 30_000
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let value = "";
+  for (;;) {
+    value = (await assetGet(themeId, key)).value ?? "";
+    if (predicate(value)) return value;
+    if (Date.now() >= deadline) return value;
+    await sleep(1500);
+  }
+}
+
 const enabled = process.env.RUN_SHOPIFY_INTEGRATION === "1";
 const themeIdRaw = process.env.SHOPIFY_TEST_THEME_ID;
 const hasEnv =
@@ -41,17 +65,23 @@ describe.skipIf(!(enabled && hasEnv))(
         const mutated = `${original}\n${MARKER}`;
         await assetUpsert(themeId, ASSET_KEY, mutated);
 
-        // 3. Verify the marker is present on re-fetch.
-        const after = await assetGet(themeId, ASSET_KEY);
-        expect(after.value ?? "").toContain(MARKER);
+        // 3. Verify the marker shows up (polling past read-after-write lag).
+        const after = await waitForAsset(themeId, ASSET_KEY, (v) =>
+          v.includes(MARKER)
+        );
+        expect(after).toContain(MARKER);
       } finally {
         // 4. Restore the original, byte-identical, even if an assertion failed.
         await assetUpsert(themeId, ASSET_KEY, original);
       }
 
-      // 5. Confirm the restore is byte-identical.
-      const restored = await assetGet(themeId, ASSET_KEY);
-      expect(restored.value ?? "").toBe(original);
-    }, 60_000);
+      // 5. Confirm the restore is byte-identical (again polling for consistency).
+      const restored = await waitForAsset(
+        themeId,
+        ASSET_KEY,
+        (v) => v === original
+      );
+      expect(restored).toBe(original);
+    }, 120_000);
   }
 );
