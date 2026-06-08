@@ -31,6 +31,7 @@ function warn(msg: string, e: unknown): void {
 }
 import type {
   ActionRecord,
+  AgentProgressEvent,
   ApplyResult,
   BreakerReason,
   Goal,
@@ -178,9 +179,11 @@ export async function runGoal(
   });
 
   // Audit is best-effort: a failing audit write must never abort or corrupt the
-  // analysis. createRun failure degrades to an unaudited run rather than throwing.
-  let runId: string | null = null;
-  if (persistAudit) {
+  // analysis. A caller-supplied runId (the control surface creates the run first so it
+  // can poll control immediately) is used as-is; otherwise createRun failure degrades to
+  // an unaudited run rather than throwing.
+  let runId: string | null = opts.runId ?? null;
+  if (persistAudit && !runId) {
     try {
       runId = await createRun(goal);
     } catch (e) {
@@ -200,59 +203,113 @@ export async function runGoal(
     }
   };
 
+  // Progress is best-effort: a throwing onProgress must never abort the run.
+  const emit = (ev: AgentProgressEvent) => {
+    if (!opts.onProgress) return;
+    try {
+      opts.onProgress(ev);
+    } catch (e) {
+      warn("onProgress threw (continuing)", e);
+    }
+  };
+  // Cooperative cancellation. A thrown shouldHalt is treated as "not killed" (a transient
+  // control-read error must not halt a healthy run; readControl already swallows its own).
+  const killRequested = async (): Promise<boolean> => {
+    if (opts.signal?.aborted) return true;
+    if (opts.shouldHalt) {
+      try {
+        return (await opts.shouldHalt()) === "kill";
+      } catch (e) {
+        warn("shouldHalt threw (continuing)", e);
+        return false;
+      }
+    }
+    return false;
+  };
+
   try {
-    // PERCEIVE — no LLM.
+    // PERCEIVE — no LLM. A kill between pages stops here; nothing has been written.
     const urls = await resolveTargetUrls(goal);
+    emit({ phase: "perceive", runId, perceived: 0, queued: 0 });
     const perceived: PerceivedPage[] = [];
+    let killed = false;
     for (const url of urls) {
+      if (await killRequested()) {
+        killed = true;
+        break;
+      }
       const scan = await processPage(url, "scan");
       perceived.push(toPerceived(goal, url, scan));
+      emit({ phase: "perceive", url, perceived: perceived.length });
     }
 
-    // PLAN — deterministic.
-    const { queue, skipped } = planTasks(goal, perceived);
-    for (const url of skipped) {
-      await record({
-        url,
-        action: "skip",
-        schemaBefore: null,
-        schemaAfter: null,
-        gates: null,
-        outcome: "already_satisfied",
-      });
-    }
-
-    // ACT — stage + gate each queued page. Breakers can halt the loop early
-    // (e.g. a run of consecutive failures) before any live write happens.
-    const satisfied: string[] = [...skipped];
+    // PLAN + ACT only run if we weren't killed during perceive.
+    const satisfied: string[] = [];
     const unsatisfied: string[] = [];
     const entries: SnippetEntry[] = [];
     const applyItems: ApplyItem[] = [];
+    let skipped: string[] = [];
     let haltedBy: BreakerReason | undefined;
 
-    for (const task of queue) {
-      const ex = await executeTask(goal, task);
-      pagesTouched += 1;
-      await record(ex.action);
-      if (ex.satisfied) {
-        satisfied.push(ex.url);
-        if (ex.entry) {
-          entries.push(ex.entry);
-          applyItems.push({ url: ex.url, entry: ex.entry });
-        }
-      } else {
-        unsatisfied.push(ex.url);
+    if (!killed) {
+      // PLAN — deterministic.
+      const planned = planTasks(goal, perceived);
+      skipped = planned.skipped;
+      satisfied.push(...skipped);
+      emit({
+        phase: "plan",
+        queued: planned.queue.length,
+        satisfied: satisfied.length,
+      });
+      for (const url of skipped) {
+        await record({
+          url,
+          action: "skip",
+          schemaBefore: null,
+          schemaAfter: null,
+          gates: null,
+          outcome: "already_satisfied",
+        });
       }
 
-      recordOutcome(breakers, {
-        success: ex.satisfied,
-        costUsd: ex.action.costUsd ?? 0,
-      });
-      const verdict = tripped(breakers);
-      if (verdict.halted) {
-        haltedBy = verdict.reason;
-        warn("circuit breaker halted the run", verdict.detail ?? verdict.reason);
-        break;
+      // ACT — stage + gate each queued page. A breaker (consecutive failures) OR a kill
+      // can halt the loop early, both before any live write happens.
+      for (const task of planned.queue) {
+        if (await killRequested()) {
+          killed = true;
+          break;
+        }
+        const ex = await executeTask(goal, task);
+        pagesTouched += 1;
+        await record(ex.action);
+        if (ex.satisfied) {
+          satisfied.push(ex.url);
+          if (ex.entry) {
+            entries.push(ex.entry);
+            applyItems.push({ url: ex.url, entry: ex.entry });
+          }
+        } else {
+          unsatisfied.push(ex.url);
+        }
+        emit({
+          phase: "act",
+          url: ex.url,
+          gates: ex.action.gates,
+          acted: pagesTouched,
+          satisfied: satisfied.length,
+          unsatisfied: unsatisfied.length,
+        });
+
+        recordOutcome(breakers, {
+          success: ex.satisfied,
+          costUsd: ex.action.costUsd ?? 0,
+        });
+        const verdict = tripped(breakers);
+        if (verdict.halted) {
+          haltedBy = verdict.reason;
+          warn("circuit breaker halted the run", verdict.detail ?? verdict.reason);
+          break;
+        }
       }
     }
 
@@ -260,10 +317,20 @@ export async function runGoal(
       ? renderSchemaGenSnippet(entries)
       : null;
 
-    // LIVE APPLY (Phase 3) — only when not dry-run, nothing halted us, and we have
-    // verified-stageable entries. Dry-run returns here with apply:null, unchanged.
+    // PRE-APPLY KILL CHECKPOINT (the load-bearing guarantee). The apply path is atomic
+    // and is never interrupted once entered, so the ONLY safe place to honor a kill is
+    // right here, before the first write. A kill caught here means nothing was written
+    // and there is nothing to roll back — "kill leaves no half-written theme" by
+    // construction.
+    if (!killed && !haltedBy && !dryRun && applyItems.length > 0) {
+      if (await killRequested()) killed = true;
+    }
+
+    // LIVE APPLY (Phase 3) — only when not dry-run, nothing halted us, not killed, and we
+    // have verified-stageable entries. Dry-run returns here with apply:null, unchanged.
     let apply: ApplyResult | null = null;
-    if (!dryRun && !haltedBy && applyItems.length > 0) {
+    if (!dryRun && !haltedBy && !killed && applyItems.length > 0) {
+      emit({ phase: "apply", queued: applyItems.length });
       const themeId = resolveWriteThemeId();
       const { shop } = getShopifyConfig();
       apply = await applyEntries({
@@ -279,11 +346,13 @@ export async function runGoal(
       for (const a of apply.actions) await record(a);
       // A rollback that itself failed pages the user — never thrash on the next run.
       if (apply.status === "paged") recordRollbackFailure(breakers);
+      emit({ phase: "apply", applyStatus: apply.status });
     }
 
     // Map the run outcome. The persisted agent_runs.status is constrained to
-    // done|failed; the richer RunResult.status (rolled_back/paged) is for callers.
-    const ranClean = unsatisfied.length === 0 && !haltedBy;
+    // done|failed; the richer RunResult.status (rolled_back/paged) is for callers. A kill
+    // finalizes as failed but is surfaced separately via RunResult.killed.
+    const ranClean = unsatisfied.length === 0 && !haltedBy && !killed;
     let status: RunResult["status"];
     if (apply && apply.status !== "applied") {
       status = apply.status === "paged" ? "paged" : "rolled_back";
@@ -294,9 +363,11 @@ export async function runGoal(
     const error =
       apply?.status === "paged"
         ? `rollback failed; theme left dirty: ${apply.error ?? "unknown"}`
-        : haltedBy
-          ? `halted by circuit breaker: ${haltedBy}`
-          : null;
+        : killed
+          ? "run killed by control signal"
+          : haltedBy
+            ? `halted by circuit breaker: ${haltedBy}`
+            : null;
 
     if (runId) {
       try {
@@ -312,6 +383,15 @@ export async function runGoal(
       }
     }
 
+    emit({
+      phase: "done",
+      runId,
+      applyStatus: apply?.status,
+      satisfied: satisfied.length,
+      unsatisfied: unsatisfied.length,
+      message: killed ? "killed" : undefined,
+    });
+
     return {
       runId,
       status,
@@ -323,6 +403,7 @@ export async function runGoal(
       stagedSnippet,
       apply,
       haltedBy,
+      killed,
       actions,
     };
   } catch (err) {

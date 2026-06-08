@@ -156,6 +156,43 @@ export interface ApplyResult {
   error?: string;
 }
 
+// ---- Streaming + cancellation (plan §9, Phase 4) ----
+
+/** Coarse phase of the loop, for progress events. */
+export type AgentPhase = "perceive" | "plan" | "act" | "apply" | "done";
+
+/**
+ * Cross-request control signal (agent_runs.control). "run" = continue.
+ * "kill" halts at the next checkpoint (never mid-apply). "pause" is reserved for
+ * Phase 5 durable pause/resume and is treated as "run" by Phase 4's loop.
+ */
+export type HaltSignal = "run" | "kill";
+
+/**
+ * One progress event emitted by runGoal via RunOptions.onProgress. The control
+ * surface forwards these verbatim over SSE; counts let the dashboard render without
+ * re-deriving state.
+ */
+export interface AgentProgressEvent {
+  phase: AgentPhase;
+  /** The run id, carried on the first event so the client can target the control route. */
+  runId?: string | null;
+  /** Page in flight (perceive / act / apply). */
+  url?: string;
+  /** L0–L4 gate results for this page (act / apply). */
+  gates?: GateResults | null;
+  /** Running counts. */
+  perceived?: number;
+  queued?: number;
+  acted?: number;
+  satisfied?: number;
+  unsatisfied?: number;
+  /** Present on phase "apply" / "done" once the live apply has run. */
+  applyStatus?: ApplyStatus;
+  /** Human-readable note, e.g. a breaker reason or "killed". */
+  message?: string;
+}
+
 // ---- Run ----
 
 export interface RunOptions {
@@ -168,6 +205,23 @@ export interface RunOptions {
   persistAudit?: boolean;
   /** Override breaker thresholds (else defaults + goal.constraints.maxCostUsd). */
   breakers?: Partial<BreakerConfig>;
+  /**
+   * Caller-supplied agent_runs id. When set, runGoal skips its own createRun and
+   * audits against this id — the control surface creates the run first so it can poll
+   * control immediately. When omitted, runGoal creates the run itself (Phase 2/3 behavior).
+   */
+  runId?: string;
+  /** Progress sink (Phase 4). Best-effort: a throwing callback never aborts the run. */
+  onProgress?: (ev: AgentProgressEvent) => void;
+  /**
+   * Cooperative cancellation (Phase 4). Polled at each checkpoint: after each perceive
+   * page, after each executed task, and immediately BEFORE the live apply. Returning
+   * "kill" halts the loop before any further write — the apply path itself is never
+   * interrupted, so a kill can never leave a half-written theme.
+   */
+  shouldHalt?: () => HaltSignal | Promise<HaltSignal>;
+  /** Secondary kill: fires on client disconnect (the SSE request's signal). */
+  signal?: AbortSignal;
 }
 
 export interface RunResult {
@@ -193,5 +247,11 @@ export interface RunResult {
   apply?: ApplyResult | null;
   /** Why the run halted early, when a circuit breaker tripped. */
   haltedBy?: BreakerReason;
+  /**
+   * The run was halted by an explicit kill (RunOptions.shouldHalt → "kill" or an
+   * aborted signal), not a breaker. The DB status is still "failed"; this lets the UI
+   * show "Killed" distinctly. When killed before the apply, no theme write happened.
+   */
+  killed?: boolean;
   actions: ActionRecord[];
 }

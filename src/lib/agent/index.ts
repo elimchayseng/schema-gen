@@ -21,7 +21,13 @@ export {
   tripped,
   DEFAULT_BREAKER_CONFIG,
 } from "./breakers";
-export { createRun, recordAction, finishRun } from "./audit";
+export {
+  createRun,
+  recordAction,
+  finishRun,
+  readControl,
+  setControl,
+} from "./audit";
 export { gatesPassed } from "./types";
 export type {
   Goal,
@@ -42,6 +48,9 @@ export type {
   BreakerReason,
   BreakerState,
   BreakerVerdict,
+  AgentPhase,
+  HaltSignal,
+  AgentProgressEvent,
   RunOptions,
   RunResult,
 } from "./types";
