@@ -3,7 +3,7 @@
  * agent_runs row per execution. Server-only via the service-role client.
  */
 import { createAdminClient } from "@/lib/supabase";
-import type { ActionRecord, Goal } from "./types";
+import type { ActionRecord, Goal, HaltSignal } from "./types";
 
 export async function createRun(goal: Goal): Promise<string> {
   const supabase = createAdminClient();
@@ -50,6 +50,42 @@ export interface FinishRunFields {
   pagesTouched: number;
   costUsd: number;
   error: string | null;
+}
+
+/**
+ * Read the cross-request control signal (agent_runs.control) the run loop polls at each
+ * checkpoint. Best-effort: any read failure degrades to "run" so a transient Supabase
+ * hiccup can never accidentally halt an otherwise-healthy run. Only "kill" maps to a
+ * halt; "pause" (Phase 5, not yet wired) and anything else are treated as "run".
+ */
+export async function readControl(runId: string): Promise<HaltSignal> {
+  try {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("agent_runs")
+      .select("control")
+      .eq("id", runId)
+      .single();
+    if (error || !data) return "run";
+    return (data as { control: string }).control === "kill" ? "kill" : "run";
+  } catch {
+    return "run";
+  }
+}
+
+/** Write the control signal. The control route uses this; resume/pause map to "run". */
+export async function setControl(
+  runId: string,
+  control: "run" | "pause" | "kill"
+): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("agent_runs")
+    .update({ control })
+    .eq("id", runId);
+  if (error) {
+    throw new Error(`Failed to set agent_run control: ${error.message}`);
+  }
 }
 
 export async function finishRun(
