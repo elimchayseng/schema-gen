@@ -7,6 +7,20 @@ export { runGoal } from "./run";
 export { planTasks } from "./planner";
 export { runGates } from "./gates";
 export { executeTask } from "./executor";
+export { l4Verify } from "./verify";
+export {
+  applyEntries,
+  makeShopifyOps,
+  type ApplyItem,
+  type ThemeAssetOps,
+} from "./apply";
+export {
+  makeBreakers,
+  recordOutcome,
+  recordRollbackFailure,
+  tripped,
+  DEFAULT_BREAKER_CONFIG,
+} from "./breakers";
 export { createRun, recordAction, finishRun } from "./audit";
 export { gatesPassed } from "./types";
 export type {
@@ -22,6 +36,12 @@ export type {
   TaskKind,
   ActionKind,
   ActionRecord,
+  ApplyResult,
+  ApplyStatus,
+  BreakerConfig,
+  BreakerReason,
+  BreakerState,
+  BreakerVerdict,
   RunOptions,
   RunResult,
 } from "./types";
