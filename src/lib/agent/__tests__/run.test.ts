@@ -30,6 +30,18 @@ const h = vi.hoisted(() => {
 });
 vi.mock("@/lib/supabase", () => ({ createAdminClient: h.createAdminClient }));
 
+// Live apply is exercised through a mocked applyEntries — run.test owns the run
+// ORCHESTRATION (breaker threading, status mapping, dry-run gating); apply.test owns
+// the write/rollback mechanics. makeShopifyOps is stubbed (no real Asset API).
+const applyMock = vi.hoisted(() => ({ fn: vi.fn() }));
+vi.mock("../apply", () => ({
+  applyEntries: applyMock.fn,
+  makeShopifyOps: vi.fn(() => ({})),
+}));
+vi.mock("@/lib/shopify/config", () => ({
+  getShopifyConfig: () => ({ shop: "shop.myshopify.com", apiVersion: "2025-01", baseUrl: "x" }),
+}));
+
 import { processPage } from "@/lib/crawl/process-page";
 import { runGoal } from "../run";
 import type { Goal } from "../types";
@@ -113,6 +125,14 @@ beforeEach(() => {
   mockProcess.mockImplementation(async (url: string, mode: string) =>
     mode === "optimize" ? optimize(url) : scan(url)
   );
+  applyMock.fn.mockReset();
+  applyMock.fn.mockResolvedValue({
+    status: "applied",
+    writeTarget: "999",
+    l4: [],
+    actions: [],
+  });
+  process.env.SHOPIFY_TEST_THEME_ID = "999";
 });
 
 describe("runGoal (5-page fixture, dry-run)", () => {
@@ -163,8 +183,9 @@ describe("runGoal (5-page fixture, dry-run)", () => {
     expect(runUpdate?.payload).toMatchObject({ status: "done" });
   });
 
-  it("refuses live apply (dryRun: false) — that is Phase 3", async () => {
-    await expect(runGoal(goal, { dryRun: false })).rejects.toThrow(/Phase 3/);
+  it("dry-run never invokes the live apply", async () => {
+    await runGoal(goal, { persistAudit: false });
+    expect(applyMock.fn).not.toHaveBeenCalled();
   });
 
   it("degrades gracefully when audit is unavailable (best-effort)", async () => {
@@ -180,5 +201,96 @@ describe("runGoal (5-page fixture, dry-run)", () => {
     expect(result.satisfied).toEqual(expect.arrayContaining([A, B, C, D, E]));
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+});
+
+// ---- Phase 3 live path ----
+
+const P1 = `${SHOP}/products/p1`;
+const P2 = `${SHOP}/products/p2`;
+const P3 = `${SHOP}/products/p3`;
+
+const liveGoal: Goal = {
+  siteId: "site-1",
+  target: { scope: "url_list", urls: [P1, P2, P3], requireTypes: ["Product"], minOutcome: "valid" },
+  constraints: { allowSchemaTypeChange: false },
+  autonomy: "auto_apply",
+};
+
+/** An optimize result whose candidate is an INVALID Product → gates L1 fail. */
+function failingOptimize(url: string): PageResult {
+  return {
+    url,
+    status: "errors",
+    originalSchemas: null,
+    fixedSchemas: [{ "@type": "Product" }], // missing required fields → invalid
+    validationResults: vr(false, 4),
+  } as unknown as PageResult;
+}
+
+describe("runGoal Phase 3 live apply", () => {
+  it("dryRun:false with all pages valid → invokes apply, status done, targets SHOPIFY_TEST_THEME_ID", async () => {
+    const result = await runGoal(liveGoal, { dryRun: false, persistAudit: false });
+
+    expect(applyMock.fn).toHaveBeenCalledTimes(1);
+    const passed = applyMock.fn.mock.calls[0][0];
+    expect(passed.themeId).toBe(999); // wrote to the test theme, never the published one
+    expect(passed.items).toHaveLength(3);
+    expect(result.status).toBe("done");
+    expect(result.apply?.status).toBe("applied");
+  });
+
+  it("L4 rollback → run status rolled_back, run continues (no throw)", async () => {
+    applyMock.fn.mockResolvedValue({
+      status: "rolled_back",
+      writeTarget: "999",
+      l4: [{ passed: false, detail: "no JSON-LD rendered" }],
+      actions: [
+        { url: P1, action: "rollback", schemaBefore: null, schemaAfter: null, gates: null, outcome: "rolled_back: L4 failed" },
+      ],
+    });
+
+    const result = await runGoal(liveGoal, { dryRun: false, persistAudit: false });
+    expect(result.status).toBe("rolled_back");
+    expect(result.actions.some((a) => a.action === "rollback")).toBe(true);
+  });
+
+  it("rollback-failure → run status paged, error surfaced", async () => {
+    applyMock.fn.mockResolvedValue({
+      status: "paged",
+      writeTarget: "999",
+      l4: [{ passed: false }],
+      actions: [],
+      error: "Shopify 500 on restore",
+    });
+
+    const result = await runGoal(liveGoal, { dryRun: false, persistAudit: false });
+    expect(result.status).toBe("paged");
+  });
+
+  it("consecutive-failure breaker halts mid-loop, no apply (same halt path the cost breaker uses)", async () => {
+    mockProcess.mockImplementation(async (url: string, mode: string) =>
+      mode === "optimize" ? failingOptimize(url) : ({
+        url, status: "no_schema", originalSchemas: null, fixedSchemas: null, validationResults: null,
+      } as unknown as PageResult)
+    );
+
+    const result = await runGoal(liveGoal, {
+      dryRun: false,
+      persistAudit: false,
+      breakers: { maxConsecutiveFailures: 3 },
+    });
+
+    expect(result.haltedBy).toBe("consecutive_failures");
+    expect(result.status).toBe("failed");
+    expect(applyMock.fn).not.toHaveBeenCalled(); // halted before apply
+    expect(result.pagesTouched).toBe(3);
+  });
+
+  it("dryRun:false with a bad/missing test theme id throws (never targets published)", async () => {
+    delete process.env.SHOPIFY_TEST_THEME_ID;
+    await expect(
+      runGoal(liveGoal, { dryRun: false, persistAudit: false })
+    ).rejects.toThrow(/SHOPIFY_TEST_THEME_ID/);
   });
 });
