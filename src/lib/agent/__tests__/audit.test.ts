@@ -5,6 +5,9 @@ const h = vi.hoisted(() => {
     inserts: [] as { table: string; payload: Record<string, unknown> }[],
     updates: [] as { table: string; payload: Record<string, unknown> }[],
     singleResult: { data: { id: "run-xyz" } as unknown, error: null as unknown },
+    // Result of a select().eq()...  query (loadCommittedUrls). eqs records the filters.
+    selectResult: { data: [] as unknown, error: null as unknown },
+    eqs: [] as { col: string; val: unknown }[],
   };
   const client = {
     from(table: string) {
@@ -16,6 +19,18 @@ const h = vi.hoisted(() => {
             then: (resolve: (v: { error: unknown }) => void) =>
               resolve({ error: null }),
           };
+        },
+        select() {
+          const builder = {
+            eq(col: string, val: unknown) {
+              state.eqs.push({ col, val });
+              return builder;
+            },
+            then(resolve: (v: unknown) => void) {
+              resolve(state.selectResult);
+            },
+          };
+          return builder;
         },
         update(payload: Record<string, unknown>) {
           state.updates.push({ table, payload });
@@ -29,7 +44,7 @@ const h = vi.hoisted(() => {
 
 vi.mock("@/lib/supabase", () => ({ createAdminClient: h.createAdminClient }));
 
-import { createRun, finishRun, recordAction } from "../audit";
+import { createRun, finishRun, loadCommittedUrls, recordAction } from "../audit";
 import type { ActionRecord, Goal } from "../types";
 
 const goal: Goal = {
@@ -44,6 +59,8 @@ describe("audit", () => {
     h.state.inserts = [];
     h.state.updates = [];
     h.state.singleResult = { data: { id: "run-xyz" }, error: null };
+    h.state.selectResult = { data: [], error: null };
+    h.state.eqs = [];
   });
 
   it("createRun inserts an agent_runs row and returns its id", async () => {
@@ -79,6 +96,27 @@ describe("audit", () => {
       outcome: "staged",
     });
     expect(row?.payload.gates).toEqual(action.gates);
+  });
+
+  it("loadCommittedUrls returns the set of l4_pass verify URLs for a run", async () => {
+    h.state.selectResult = {
+      data: [{ url: "/products/a" }, { url: "/products/b" }],
+      error: null,
+    };
+    const committed = await loadCommittedUrls("run-1");
+    expect(committed).toEqual(new Set(["/products/a", "/products/b"]));
+    // Filters on the run + the committed-signal (verify / l4_pass).
+    expect(h.state.eqs).toEqual([
+      { col: "run_id", val: "run-1" },
+      { col: "action", val: "verify" },
+      { col: "outcome", val: "l4_pass" },
+    ]);
+  });
+
+  it("loadCommittedUrls degrades to an empty set on a query error (best-effort)", async () => {
+    h.state.selectResult = { data: null, error: { message: "boom" } };
+    const committed = await loadCommittedUrls("run-1");
+    expect(committed).toEqual(new Set());
   });
 
   it("finishRun updates the run row with status + ended_at", async () => {

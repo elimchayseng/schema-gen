@@ -8,6 +8,8 @@ const h = vi.hoisted(() => {
   const state = {
     inserts: [] as { table: string; payload: Record<string, unknown> }[],
     updates: [] as { table: string; payload: Record<string, unknown> }[],
+    // Rows returned by loadCommittedUrls' select().eq()... query (resume).
+    committed: [] as { url: string }[],
   };
   const client = {
     from(table: string) {
@@ -19,6 +21,14 @@ const h = vi.hoisted(() => {
             then: (resolve: (v: { error: unknown }) => void) => resolve({ error: null }),
           };
         },
+        select() {
+          const builder = {
+            eq: () => builder,
+            then: (resolve: (v: unknown) => void) =>
+              resolve({ data: state.committed, error: null }),
+          };
+          return builder;
+        },
         update(payload: Record<string, unknown>) {
           state.updates.push({ table, payload });
           return { eq: async () => ({ error: null }) };
@@ -29,6 +39,12 @@ const h = vi.hoisted(() => {
   return { state, createAdminClient: vi.fn(() => client) };
 });
 vi.mock("@/lib/supabase", () => ({ createAdminClient: h.createAdminClient }));
+
+// The L6 judge is mocked so no test makes a network call. Default: soft pass. Tests that
+// exercise judge:true override the return value. With judge:false (the default) it is
+// never invoked.
+const judgeMock = vi.hoisted(() => ({ fn: vi.fn(async () => ({ passed: true, detail: "ok" })) }));
+vi.mock("../judge", () => ({ l6Judge: judgeMock.fn }));
 
 // Live apply is exercised through a mocked applyEntries — run.test owns the run
 // ORCHESTRATION (breaker threading, status mapping, dry-run gating); apply.test owns
@@ -122,6 +138,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.state.inserts = [];
   h.state.updates = [];
+  h.state.committed = [];
+  judgeMock.fn.mockReset();
+  judgeMock.fn.mockResolvedValue({ passed: true, detail: "ok" });
   mockProcess.mockImplementation(async (url: string, mode: string) =>
     mode === "optimize" ? optimize(url) : scan(url)
   );
@@ -201,6 +220,79 @@ describe("runGoal (5-page fixture, dry-run)", () => {
     expect(result.satisfied).toEqual(expect.arrayContaining([A, B, C, D, E]));
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+});
+
+// ---- Phase 5 hardening ----
+
+describe("runGoal Phase 5 hardening", () => {
+  it("resume: a page already committed (l4_pass) is never re-processed", async () => {
+    h.state.committed = [{ url: B }]; // B was committed live by a prior slice of this run
+
+    const result = await runGoal(goal, { persistAudit: true }); // persistAudit → runId set
+
+    // B is skipped entirely — neither scanned nor optimized.
+    expect(mockProcess).not.toHaveBeenCalledWith(B, "scan");
+    expect(mockProcess).not.toHaveBeenCalledWith(B, "optimize");
+    // It still counts as satisfied/skipped and gets an audit row.
+    expect(result.satisfied).toContain(B);
+    expect(result.skipped).toContain(B);
+    expect(
+      result.actions.some((a) => a.url === B && a.outcome === "already_committed")
+    ).toBe(true);
+    // Only A,C,D,E were perceived; C,D,E acted on (A is already valid → planner skip).
+    expect(result.pagesTouched).toBe(3);
+    expect(result.status).toBe("done");
+  });
+
+  it("resume is inert for a fresh run (no committed rows → behaves as before)", async () => {
+    const result = await runGoal(goal, { persistAudit: false }); // no runId → no lookup
+    expect(result.pagesTouched).toBe(4);
+    expect(result.satisfied).toEqual(expect.arrayContaining([A, B, C, D, E]));
+  });
+
+  it("concurrency: never runs more than `concurrency` processPage calls at once", async () => {
+    let active = 0;
+    let maxActive = 0;
+    mockProcess.mockImplementation(async (url: string, mode: string) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 0)); // hold the slot open across a tick
+      active--;
+      return mode === "optimize" ? optimize(url) : scan(url);
+    });
+
+    await runGoal(goal, { persistAudit: false, concurrency: 2 });
+
+    expect(maxActive).toBeGreaterThan(1); // actually parallelized
+    expect(maxActive).toBeLessThanOrEqual(2); // but never above the cap
+  });
+
+  it("L6 judge logs but never gates: a FAILING judge still leaves pages staged", async () => {
+    judgeMock.fn.mockResolvedValue({ passed: false, detail: "judge: type mismatch" });
+
+    const result = await runGoal(goal, { persistAudit: false, judge: true });
+
+    // Run still completes; the failing soft judge did not block any commit.
+    expect(result.status).toBe("done");
+    expect(result.unsatisfied).toEqual([]);
+    expect(result.satisfied).toEqual(expect.arrayContaining([B, C, D, E]));
+    // Every executed action carries the L6 verdict (passed:false), recorded for audit.
+    const executed = result.actions.filter((a) => a.action !== "skip");
+    expect(executed).toHaveLength(4);
+    for (const a of executed) {
+      expect(a.gates?.L6).toEqual({ passed: false, detail: "judge: type mismatch" });
+    }
+    expect(judgeMock.fn).toHaveBeenCalledTimes(4);
+  });
+
+  it("judge is off by default: l6Judge is never invoked and no L6 is recorded", async () => {
+    const result = await runGoal(goal, { persistAudit: false });
+    expect(judgeMock.fn).not.toHaveBeenCalled();
+    const executed = result.actions.filter((a) => a.action !== "skip");
+    for (const a of executed) {
+      expect(a.gates?.L6).toBeUndefined();
+    }
   });
 });
 

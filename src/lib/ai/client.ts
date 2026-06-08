@@ -4,6 +4,7 @@ import { createParser, type EventSourceMessage } from "eventsource-parser";
 import type { GeneratorResult, LLMMessage } from "./types";
 import type { ValidationIssue } from "@/lib/validation/types";
 import { schemaDefinitions } from "@/lib/validation/schema-definitions";
+import { generationCache, hashContent } from "./cache";
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -338,6 +339,20 @@ export async function generateSchemas(
     },
   ];
 
+  // 24h content-hash cache (Phase 5). Keyed on model + exact user message, so a hit is
+  // byte-correct for that input. structuredClone isolates the caller from the cached
+  // object (and vice-versa) — neither side may mutate shared state.
+  const cacheKey = hashContent(`${INFERENCE_MODEL}\n${messages[1].content}`);
+  const cached = generationCache.get(cacheKey);
+  if (cached) {
+    log("info", "Schema generation cache hit", {
+      requestId,
+      url,
+      cacheKey: cacheKey.slice(0, 12),
+    });
+    return structuredClone(cached);
+  }
+
   const systemPromptTokenEstimate = Math.ceil(SYSTEM_PROMPT.length / 4);
   const userContentTokenEstimate = Math.ceil(messages[1].content.length / 4);
 
@@ -462,6 +477,10 @@ export async function generateSchemas(
       recommendationCount: validated.data.recommendations.length,
       noteCount: validated.data.notes.length,
     });
+
+    // Cache only validated successes (never errors). Store a clone so a later mutation
+    // of the returned object can't corrupt the cached entry.
+    generationCache.set(cacheKey, structuredClone(validated.data));
 
     return validated.data;
   } catch (err: unknown) {

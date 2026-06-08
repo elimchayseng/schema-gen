@@ -7,18 +7,15 @@
   - Process pages 3-5 at a time, not all at once
   - Add per-page timeout (15s) to prevent one slow page from blocking the batch
   - Context: raised during eng review outside voice challenge (2026-03-27)
+  - NOTE: the AGENT loop (`runGoal`) now batches perceive/act at a 1–5 concurrency cap
+    (Phase 5, `concurrency.ts`). This item remains for the `fix-all` crawl ROUTE, which
+    still fans out all pages at once and has no pre-flight cost estimate.
 
-- **Sitemap quality filtering + fallback** (P1, Medium effort)
-  - Filter admin/duplicate URLs from Shopify auto-generated sitemaps
-  - Common Shopify sitemap issues: admin paths, paginated variants, duplicate URLs
-  - Consider link-following crawler as v2 fallback for stores with no sitemap
-  - Context: outside voice flagged that many small Shopify stores have poor sitemaps
-
-- **Response caching for LLM calls** (P1, Medium effort — upgraded from P2)
-  - 24h TTL, keyed by HTML content hash
-  - Avoids redundant LLM calls for the same page content
-  - Especially valuable for site-wide crawl: Shopify stores with 50 product pages using the same template would save ~50% of LLM calls (~$3.75 per crawl)
-  - Context: upgraded from P2 after site-wide crawl feature makes this much more impactful
+- **Sitemap link-following crawler fallback** (P2, Medium effort)
+  - DONE in Phase 5: admin/duplicate/feed/pagination filtering + dedup now runs inside
+    `fetchSitemap` (`filterSitemapUrls`), shared by the crawl and the agent.
+  - Remaining: a link-following crawler as a v2 fallback for stores with no sitemap.
+  - Context: outside voice flagged that many small Shopify stores have poor sitemaps.
 
 - **Real LLM token cost accounting for the agent budget breaker** (P1, Medium effort)
   - Phase 3 ships the cost circuit-breaker MECHANISM (`breakers.ts` halts when

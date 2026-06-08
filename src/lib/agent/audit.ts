@@ -44,6 +44,32 @@ export async function recordAction(
   }
 }
 
+/**
+ * Idempotent resume (Phase 5, plan §7 item 5). Returns the set of URLs this run has
+ * already COMMITTED to the live theme — i.e. an `l4_pass` verify row exists (apply.ts
+ * records one per item once its live render verified). A resumed run drops these from
+ * its queue so a committed page is never re-processed.
+ *
+ * Best-effort, like readControl: any read failure degrades to an empty set, so a
+ * transient Supabase hiccup can never make a fresh run *look* fully committed and skip
+ * everything. In dry-run nothing is committed, so this is naturally empty.
+ */
+export async function loadCommittedUrls(runId: string): Promise<Set<string>> {
+  try {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("agent_actions")
+      .select("url")
+      .eq("run_id", runId)
+      .eq("action", "verify")
+      .eq("outcome", "l4_pass");
+    if (error || !data) return new Set();
+    return new Set((data as { url: string }[]).map((r) => r.url));
+  } catch {
+    return new Set();
+  }
+}
+
 export interface FinishRunFields {
   status: "done" | "failed";
   iterations: number;

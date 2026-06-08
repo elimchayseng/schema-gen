@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { preprocessHtml, readSSEStream } from "../client";
 
 // ─── Helper to create a ReadableStream-based Response ────────────────────────
@@ -141,5 +141,76 @@ describe("readSSEStream", () => {
 
     const result = await readSSEStream(response, "test-6");
     expect(result).toBe("Real");
+  });
+});
+
+// ─── generateSchemas caching (Phase 5) ───────────────────────────────────────
+
+// A minimal GeneratorResult that satisfies generatorResultSchema.
+const VALID_RESULT = {
+  pageType: "product",
+  recommendations: [
+    {
+      type: "Product",
+      priority: 1 as const,
+      rationale: "It is a product detail page.",
+      jsonld: { "@type": "Product", name: "Tee" },
+      shopifyInstructions: "render in product template",
+    },
+  ],
+  mergedJsonld: [{ "@type": "Product", name: "Tee" }],
+  notes: [],
+};
+
+/** An SSE response whose streamed content is the JSON of `obj`. */
+function makeResultResponse(obj: unknown): Response {
+  const content = JSON.stringify(obj);
+  return makeSSEResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`,
+    "data: [DONE]\n\n",
+  ]);
+}
+
+describe("generateSchemas caching", () => {
+  beforeEach(() => {
+    // Fresh module graph → empty cache + env consts captured from the stubs below.
+    vi.resetModules();
+    vi.stubEnv("HEROKU_INFERENCE_URL", "https://inference.test");
+    vi.stubEnv("HEROKU_INFERENCE_KEY", "test-key");
+    vi.stubEnv("HEROKU_INFERENCE_MODEL", "test-model");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("serves an identical second call from cache (one fetch, equal result)", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(makeResultResponse(VALID_RESULT));
+
+    const { generateSchemas } = await import("../client");
+    const html = "<html><body><h1>Tee</h1><p>A nice tee.</p></body></html>";
+    const url = "https://shop.test/products/tee";
+
+    const first = await generateSchemas(html, url);
+    const second = await generateSchemas(html, url);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // second call hit the cache
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first); // returned a clone, not the shared cached object
+  });
+
+  it("does not cache across different content (distinct keys → two fetches)", async () => {
+    // Fresh Response per call — a ReadableStream body can only be consumed once.
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => makeResultResponse(VALID_RESULT));
+
+    const { generateSchemas } = await import("../client");
+    await generateSchemas("<html><body>A</body></html>", "https://shop.test/a");
+    await generateSchemas("<html><body>B different</body></html>", "https://shop.test/b");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
