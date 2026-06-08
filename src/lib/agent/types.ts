@@ -53,12 +53,18 @@ export interface GateResults {
    * for staged-but-not-applied pages (the live render doesn't exist yet).
    */
   L4?: GateResult | null;
+  /**
+   * L6 soft LLM judge (plan §6, Phase 5): "does this schema match the page's intent?".
+   * SOFT and informational ONLY — `gatesPassed` deliberately ignores it, so it can never
+   * block a commit. null/absent when the judge is disabled (the default) or unavailable.
+   */
+  L6?: GateResult | null;
 }
 
 /**
- * Pre-apply gate verdict (L0–L3). L4 is deliberately excluded: it can only be
- * evaluated AFTER a write (it fetches the live render), so it is checked
- * separately in the apply path, not here.
+ * Pre-apply gate verdict (L0–L3). L4 and L6 are deliberately excluded: L4 can only be
+ * evaluated AFTER a write (it fetches the live render) and is checked separately in the
+ * apply path; L6 is a SOFT LLM judge that only logs and must never block a commit.
  */
 export function gatesPassed(g: GateResults): boolean {
   return (
@@ -222,6 +228,25 @@ export interface RunOptions {
   shouldHalt?: () => HaltSignal | Promise<HaltSignal>;
   /** Secondary kill: fires on client disconnect (the SSE request's signal). */
   signal?: AbortSignal;
+  /**
+   * Max pages processed concurrently in the perceive + act phases (Phase 5). Bounds the
+   * LLM/scan fan-out so a large store can't flood the inference endpoint or the Asset
+   * API. Clamped to 1..5; defaults to 4. The apply path is a single atomic write and is
+   * unaffected.
+   */
+  concurrency?: number;
+  /**
+   * Idempotent resume (Phase 5). Default true: when auditing against an existing runId,
+   * pages already committed live (an l4_pass verify row) are dropped from the queue so a
+   * resumed run never re-processes them. A fresh run has no such rows, so this is inert.
+   */
+  resume?: boolean;
+  /**
+   * Run the SOFT L6 LLM judge per acted page (Phase 5). Default false. When on, the
+   * judge's verdict is recorded as gates.L6 but NEVER affects pass/fail — it only logs.
+   * Off keeps the path inert (no extra LLM calls), so unit tests stay deterministic.
+   */
+  judge?: boolean;
 }
 
 export interface RunResult {

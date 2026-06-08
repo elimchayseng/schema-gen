@@ -24,7 +24,8 @@ import {
   recordRollbackFailure,
   tripped,
 } from "./breakers";
-import { createRun, finishRun, recordAction } from "./audit";
+import { createRun, finishRun, loadCommittedUrls, recordAction } from "./audit";
+import { chunk, clampConcurrency } from "./concurrency";
 
 function warn(msg: string, e: unknown): void {
   console.warn(`[agent] ${msg}: ${e instanceof Error ? e.message : String(e)}`);
@@ -173,6 +174,9 @@ export async function runGoal(
 ): Promise<RunResult> {
   const dryRun = opts.dryRun ?? true;
   const persistAudit = opts.persistAudit ?? true;
+  const concurrency = clampConcurrency(opts.concurrency);
+  const resume = opts.resume ?? true;
+  const judge = opts.judge ?? false;
   const breakers = makeBreakers({
     maxCostUsd: goal.constraints.maxCostUsd,
     ...opts.breakers,
@@ -228,40 +232,68 @@ export async function runGoal(
   };
 
   try {
-    // PERCEIVE — no LLM. A kill between pages stops here; nothing has been written.
-    const urls = await resolveTargetUrls(goal);
+    // PERCEIVE — no LLM. A kill between batches stops here; nothing has been written.
+    let urls = await resolveTargetUrls(goal);
+
+    // Idempotent resume (Phase 5): drop pages this run already committed live (an
+    // l4_pass verify row). A resumed run never re-processes them; a fresh run has none,
+    // so this is inert. Best-effort — loadCommittedUrls degrades to empty on any error.
+    const committedSkipped: string[] = [];
+    if (resume && runId) {
+      const committed = await loadCommittedUrls(runId);
+      if (committed.size > 0) {
+        for (const u of urls) {
+          if (!committed.has(u)) continue;
+          committedSkipped.push(u);
+          await record({
+            url: u,
+            action: "skip",
+            schemaBefore: null,
+            schemaAfter: null,
+            gates: null,
+            outcome: "already_committed",
+          });
+        }
+        urls = urls.filter((u) => !committed.has(u));
+      }
+    }
+
     emit({ phase: "perceive", runId, perceived: 0, queued: 0 });
     const perceived: PerceivedPage[] = [];
     let killed = false;
-    for (const url of urls) {
+    // Bounded fan-out: scan up to `concurrency` pages at once, fold results in order so
+    // progress events stay deterministic. Kill is honored before each batch.
+    for (const batch of chunk(urls, concurrency)) {
       if (await killRequested()) {
         killed = true;
         break;
       }
-      const scan = await processPage(url, "scan");
-      perceived.push(toPerceived(goal, url, scan));
-      emit({ phase: "perceive", url, perceived: perceived.length });
+      const scans = await Promise.all(batch.map((u) => processPage(u, "scan")));
+      for (let i = 0; i < batch.length; i++) {
+        perceived.push(toPerceived(goal, batch[i], scans[i]));
+        emit({ phase: "perceive", url: batch[i], perceived: perceived.length });
+      }
     }
 
     // PLAN + ACT only run if we weren't killed during perceive.
-    const satisfied: string[] = [];
+    const satisfied: string[] = [...committedSkipped];
     const unsatisfied: string[] = [];
     const entries: SnippetEntry[] = [];
     const applyItems: ApplyItem[] = [];
-    let skipped: string[] = [];
+    let skipped: string[] = [...committedSkipped];
     let haltedBy: BreakerReason | undefined;
 
     if (!killed) {
       // PLAN — deterministic.
       const planned = planTasks(goal, perceived);
-      skipped = planned.skipped;
-      satisfied.push(...skipped);
+      skipped = [...committedSkipped, ...planned.skipped];
+      satisfied.push(...planned.skipped);
       emit({
         phase: "plan",
         queued: planned.queue.length,
         satisfied: satisfied.length,
       });
-      for (const url of skipped) {
+      for (const url of planned.skipped) {
         await record({
           url,
           action: "skip",
@@ -272,44 +304,54 @@ export async function runGoal(
         });
       }
 
-      // ACT — stage + gate each queued page. A breaker (consecutive failures) OR a kill
-      // can halt the loop early, both before any live write happens.
-      for (const task of planned.queue) {
+      // ACT — stage + gate each queued page, up to `concurrency` at a time. Results are
+      // folded in queue order, so the consecutive-failure breaker behaves exactly as it
+      // did sequentially. A breaker trip OR a kill halts the loop early — both before any
+      // live write. Kill is honored before each batch (per-batch granularity); the
+      // load-bearing pre-apply checkpoint still guarantees no half-written theme.
+      for (const batch of chunk(planned.queue, concurrency)) {
         if (await killRequested()) {
           killed = true;
           break;
         }
-        const ex = await executeTask(goal, task);
-        pagesTouched += 1;
-        await record(ex.action);
-        if (ex.satisfied) {
-          satisfied.push(ex.url);
-          if (ex.entry) {
-            entries.push(ex.entry);
-            applyItems.push({ url: ex.url, entry: ex.entry });
+        const results = await Promise.all(
+          batch.map((task) => executeTask(goal, task, { judge }))
+        );
+        let halted = false;
+        for (const ex of results) {
+          pagesTouched += 1;
+          await record(ex.action);
+          if (ex.satisfied) {
+            satisfied.push(ex.url);
+            if (ex.entry) {
+              entries.push(ex.entry);
+              applyItems.push({ url: ex.url, entry: ex.entry });
+            }
+          } else {
+            unsatisfied.push(ex.url);
           }
-        } else {
-          unsatisfied.push(ex.url);
-        }
-        emit({
-          phase: "act",
-          url: ex.url,
-          gates: ex.action.gates,
-          acted: pagesTouched,
-          satisfied: satisfied.length,
-          unsatisfied: unsatisfied.length,
-        });
+          emit({
+            phase: "act",
+            url: ex.url,
+            gates: ex.action.gates,
+            acted: pagesTouched,
+            satisfied: satisfied.length,
+            unsatisfied: unsatisfied.length,
+          });
 
-        recordOutcome(breakers, {
-          success: ex.satisfied,
-          costUsd: ex.action.costUsd ?? 0,
-        });
-        const verdict = tripped(breakers);
-        if (verdict.halted) {
-          haltedBy = verdict.reason;
-          warn("circuit breaker halted the run", verdict.detail ?? verdict.reason);
-          break;
+          recordOutcome(breakers, {
+            success: ex.satisfied,
+            costUsd: ex.action.costUsd ?? 0,
+          });
+          const verdict = tripped(breakers);
+          if (verdict.halted) {
+            haltedBy = verdict.reason;
+            warn("circuit breaker halted the run", verdict.detail ?? verdict.reason);
+            halted = true;
+            break;
+          }
         }
+        if (halted) break;
       }
     }
 

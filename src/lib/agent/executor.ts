@@ -8,6 +8,7 @@ import { processPage } from "@/lib/crawl/process-page";
 import { urlToTemplateTarget, type SnippetEntry } from "@/lib/shopify/snippet";
 import { runGates } from "./gates";
 import { gatesPassed } from "./types";
+import { l6Judge } from "./judge";
 import type { ActionRecord, Goal, PlannedTask } from "./types";
 
 export interface ExecutedTask {
@@ -18,9 +19,17 @@ export interface ExecutedTask {
   entry: SnippetEntry | null;
 }
 
+export interface ExecuteOptions {
+  /** Run the SOFT L6 judge and attach its verdict as gates.L6 (never gates). Default off. */
+  judge?: boolean;
+  /** Injectable judge for tests; defaults to l6Judge. */
+  judgeFn?: typeof l6Judge;
+}
+
 export async function executeTask(
   goal: Goal,
-  task: PlannedTask
+  task: PlannedTask,
+  opts: ExecuteOptions = {}
 ): Promise<ExecutedTask> {
   // optimize = extract -> validate -> fix -> AI generate -> refine.
   const result = await processPage(task.url, "optimize");
@@ -33,7 +42,14 @@ export async function executeTask(
     beforeErrorCount: task.beforeErrorCount,
     beforeHadSchema: task.beforeHadSchema,
   });
+  // ok is the deterministic L0–L3 verdict. The L6 judge is computed AFTER this and never
+  // feeds into ok — gatesPassed ignores L6 by contract, so it is logged, never gating.
   const ok = gatesPassed(gates);
+
+  if (opts.judge) {
+    const judgeFn = opts.judgeFn ?? l6Judge;
+    gates.L6 = await judgeFn({ url: task.url, candidates });
+  }
 
   const target = urlToTemplateTarget(task.url);
   const entry: SnippetEntry | null =

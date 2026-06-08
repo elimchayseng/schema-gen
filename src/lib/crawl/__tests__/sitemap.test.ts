@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseSitemapXml, isSitemapIndex, fetchSitemap } from "../sitemap";
+import {
+  parseSitemapXml,
+  isSitemapIndex,
+  fetchSitemap,
+  filterSitemapUrls,
+} from "../sitemap";
 
 describe("parseSitemapXml", () => {
   it("parses a standard sitemap with urlset", () => {
@@ -63,6 +68,81 @@ describe("parseSitemapXml", () => {
 
     const urls = parseSitemapXml(xml);
     expect(urls).toEqual([]);
+  });
+});
+
+describe("filterSitemapUrls", () => {
+  const locs = (urls: { loc: string }[]) => urls.map((u) => u.loc);
+
+  it("keeps real content pages (products, collections, pages, blogs)", () => {
+    const input = [
+      { loc: "https://shop.com/products/tee" },
+      { loc: "https://shop.com/collections/summer" },
+      { loc: "https://shop.com/pages/about" },
+      { loc: "https://shop.com/blogs/news/launch" },
+      { loc: "https://shop.com/" },
+    ];
+    expect(filterSitemapUrls(input)).toEqual(input);
+  });
+
+  it("drops admin / cart / account / checkout / policies / search paths", () => {
+    const input = [
+      { loc: "https://shop.com/products/keep" },
+      { loc: "https://shop.com/cart" },
+      { loc: "https://shop.com/account/login" },
+      { loc: "https://shop.com/checkout" },
+      { loc: "https://shop.com/admin/themes" },
+      { loc: "https://shop.com/policies/refund-policy" },
+      { loc: "https://shop.com/search?q=hat" },
+    ];
+    expect(locs(filterSitemapUrls(input))).toEqual([
+      "https://shop.com/products/keep",
+    ]);
+  });
+
+  it("drops the collection-scoped duplicate of a product (canonical is /products/x)", () => {
+    const input = [
+      { loc: "https://shop.com/products/tee" },
+      { loc: "https://shop.com/collections/summer/products/tee" },
+    ];
+    expect(locs(filterSitemapUrls(input))).toEqual([
+      "https://shop.com/products/tee",
+    ]);
+  });
+
+  it("drops feed/asset extensions and pagination/utm query URLs", () => {
+    const input = [
+      { loc: "https://shop.com/products/a" },
+      { loc: "https://shop.com/blogs/news.atom" },
+      { loc: "https://shop.com/sitemap_products_1.xml" },
+      { loc: "https://shop.com/collections/all?page=2" },
+      { loc: "https://shop.com/products/b?variant=123" },
+      { loc: "https://shop.com/products/c?utm_source=email" },
+    ];
+    expect(locs(filterSitemapUrls(input))).toEqual([
+      "https://shop.com/products/a",
+    ]);
+  });
+
+  it("de-duplicates on normalized loc (trailing slash + query ignored)", () => {
+    const input = [
+      { loc: "https://shop.com/products/tee" },
+      { loc: "https://shop.com/products/tee/" },
+      { loc: "https://SHOP.com/products/tee" },
+    ];
+    expect(filterSitemapUrls(input)).toHaveLength(1);
+  });
+
+  it("drops unparseable locs and preserves order + lastmod of survivors", () => {
+    const input = [
+      { loc: "not a url" },
+      { loc: "https://shop.com/products/a", lastmod: "2026-01-01" },
+      { loc: "https://shop.com/products/b" },
+    ];
+    expect(filterSitemapUrls(input)).toEqual([
+      { loc: "https://shop.com/products/a", lastmod: "2026-01-01" },
+      { loc: "https://shop.com/products/b" },
+    ]);
   });
 });
 

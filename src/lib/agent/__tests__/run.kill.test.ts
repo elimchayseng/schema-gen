@@ -135,11 +135,13 @@ describe("runGoal kill (Phase 4) — no half-written theme", () => {
   });
 
   it("kill mid-act stops before executing the queued page or applying", async () => {
-    // perceive runs for both pages, then the first act-loop check kills.
+    // Kill is checked once per BATCH (Phase 5 concurrency): the single perceive batch for
+    // [B,C] runs, then the act-batch check kills before any executeTask. So the kill lands
+    // on the 2nd signal (perceive-batch=run, act-batch=kill), not the 3rd.
     const result = await runGoal(goalFor([B, C]), {
       persistAudit: false,
       dryRun: false,
-      shouldHalt: signalSequence("run", "run", "kill"),
+      shouldHalt: signalSequence("run", "kill"),
     });
 
     // perceive scanned both; no optimize (executeTask) ever ran.
