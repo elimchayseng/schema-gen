@@ -20,6 +20,16 @@
   - Especially valuable for site-wide crawl: Shopify stores with 50 product pages using the same template would save ~50% of LLM calls (~$3.75 per crawl)
   - Context: upgraded from P2 after site-wide crawl feature makes this much more impactful
 
+- **Real LLM token cost accounting for the agent budget breaker** (P1, Medium effort)
+  - Phase 3 ships the cost circuit-breaker MECHANISM (`breakers.ts` halts when
+    `costUsd > maxCostUsd`) but production `costUsd` is hard-coded `0`, so the breaker
+    never actually trips on a live run.
+  - Thread real token usage out of `generateSchemas`/`refineAllRecommendations` →
+    `processPage` → `executeTask` → `runGoal` so the running sum is accurate.
+  - Until then `maxCostUsd` is enforced only against injected costs in unit tests.
+  - Context: eng review decision D3 (2026-06-06), Phase 3. See docs/agent/phase-3-design.md.
+  - Depends on: nothing; orthogonal to the guardrail work.
+
 - **Strip unused scoring math from compute-score.ts** (P3, Small effort)
   - Remove `ScoreBreakdown`, `computeCoverage()`, `computeQuality()`, `computeCompleteness()` and helpers (~150 lines)
   - UI no longer renders numeric scores or breakdown bars (removed in PR #1)
