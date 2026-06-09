@@ -44,6 +44,45 @@ describe("fixSchema", () => {
     );
   });
 
+  it("normalizes a wrong-protocol enum (http://schema.org → https://schema.org)", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Test Product",
+      offers: {
+        "@type": "Offer",
+        price: 29.99,
+        priceCurrency: "USD",
+        availability: "http://schema.org/InStock",
+      },
+    };
+
+    const result = fixSchema(schema as Record<string, unknown>);
+    const offers = result.fixed.offers as Record<string, unknown>;
+
+    expect(offers.availability).toBe("https://schema.org/InStock");
+    expect(result.validationAfter.valid).toBe(true);
+  });
+
+  it("normalizes a wrong-case enum segment", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Test Product",
+      offers: {
+        "@type": "Offer",
+        price: 29.99,
+        priceCurrency: "USD",
+        availability: "https://schema.org/instock",
+      },
+    };
+
+    const result = fixSchema(schema as Record<string, unknown>);
+    const offers = result.fixed.offers as Record<string, unknown>;
+
+    expect(offers.availability).toBe("https://schema.org/InStock");
+  });
+
   it("expands enum shorthand to full URL", () => {
     const schema = {
       "@context": "https://schema.org",

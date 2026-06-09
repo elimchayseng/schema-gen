@@ -43,9 +43,13 @@ describe("runGates", () => {
     expect(g.L3.passed).toBe(true);
   });
 
-  it("L1 fails when a candidate is invalid", () => {
+  it("L1 fails when a candidate is invalid, and names the specific error", () => {
     const g = runGates({ ...base, candidates: [{ "@type": "Product" }] });
     expect(g.L1.passed).toBe(false);
+    // The detail must name the type + the real validation message, not a generic string,
+    // so the operator sees WHAT is wrong (the per-page reason line surfaces this).
+    expect(g.L1.detail).toMatch(/Product:/);
+    expect(g.L1.detail).not.toBe("one or more candidate schemas are invalid");
   });
 
   it("L1 fails when the required type is absent", () => {

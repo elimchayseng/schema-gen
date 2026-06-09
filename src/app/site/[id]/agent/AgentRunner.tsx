@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+// Value import MUST come from the pure leaf module, not the @/lib/agent barrel: the
+// barrel re-exports runGoal/audit → supabase → node:crypto, which a client bundle can't
+// resolve. Types from the barrel are fine (erased at compile time).
+import { groupRunPages, type RunPageGroups } from "@/lib/agent/run-grouping";
 import type {
   AgentProgressEvent,
   ApplyResult,
@@ -25,10 +29,24 @@ interface DoneSummary {
   error?: string;
 }
 
+/** An acted page, as observed on the live stream. */
 interface PageRow {
   url: string;
   gates: GateResults | null;
+  outcome?: string;
 }
+
+/** Lazily-loaded per-page before/after, fetched from the run-detail endpoint on expand. */
+interface PageDetail {
+  before: unknown;
+  after: unknown;
+  outcome?: string;
+}
+type DetailState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; byUrl: Record<string, PageDetail> };
 
 const SCOPES: { value: GoalScope; label: string }[] = [
   { value: "all_products", label: "All products" },
@@ -36,30 +54,166 @@ const SCOPES: { value: GoalScope; label: string }[] = [
   { value: "url_list", label: "Specific URLs" },
 ];
 
-/** A single gate verdict chip. null = gate not applicable for this goal. */
-function GateChip({ level, result }: { level: string; result: GateResult | null | undefined }) {
+/** Plain-language names for the deterministic gates (L0–L4). */
+const GATE_LABELS: Record<string, string> = {
+  L0: "Built",
+  L1: "Valid",
+  L2: "Rich-eligible",
+  L3: "No-regression",
+  L4: "Live-verified",
+};
+
+const GATE_ORDER: (keyof GateResults)[] = ["L0", "L1", "L2", "L3", "L4"];
+
+/** Google's free Rich Results Test, deep-linked to a page — the customer's proof. */
+function richResultsTestUrl(pageUrl: string): string {
+  return `https://search.google.com/test/rich-results?url=${encodeURIComponent(pageUrl)}`;
+}
+
+/** A single gate verdict chip. null = gate not applicable for this goal/phase. */
+function GateChip({ level, result }: { level: keyof GateResults; result: GateResult | null | undefined }) {
+  const label = GATE_LABELS[level] ?? level;
   const base = "inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium";
   if (result == null) {
-    return <span className={`${base} bg-slate-100 text-slate-400`} title="not applicable">{level} n/a</span>;
+    return (
+      <span className={`${base} bg-surface-2 text-text-muted`} aria-label={`${label}: not checked`}>
+        {label} n/a
+      </span>
+    );
   }
+  const state = result.passed ? "passed" : "failed";
+  const aria = `${label}: ${state}${result.detail ? ` — ${result.detail}` : ""}`;
   return result.passed ? (
-    <span className={`${base} bg-emerald-100 text-emerald-700`} title={result.detail ?? "passed"}>{level} ✓</span>
+    <span className={`${base} bg-valid/15 text-accent-bright`} aria-label={aria}>{label} ✓</span>
   ) : (
-    <span className={`${base} bg-red-100 text-red-700`} title={result.detail ?? "failed"}>{level} ✗</span>
+    <span className={`${base} bg-error/15 text-error`} aria-label={aria}>{label} ✗</span>
   );
 }
 
 function GateRow({ gates }: { gates: GateResults | null }) {
-  if (!gates) return <span className="text-xs text-slate-400">—</span>;
+  if (!gates) return null;
   return (
     <div className="flex flex-wrap gap-1">
-      <GateChip level="L0" result={gates.L0} />
-      <GateChip level="L1" result={gates.L1} />
-      <GateChip level="L2" result={gates.L2} />
-      <GateChip level="L3" result={gates.L3} />
-      <GateChip level="L4" result={gates.L4} />
+      {GATE_ORDER.map((lvl) => (
+        <GateChip key={lvl} level={lvl} result={gates[lvl]} />
+      ))}
     </div>
   );
+}
+
+/** The first failing gate (or AI error) for a page, as visible text — never hover-only. */
+function rowReason(row: PageRow | undefined): string | null {
+  if (!row) return null;
+  if (row.outcome?.startsWith("processing_failed")) {
+    return row.outcome.replace(/^processing_failed:\s*/, "AI error: ");
+  }
+  const g = row.gates;
+  if (g) {
+    for (const lvl of GATE_ORDER) {
+      const res = g[lvl];
+      if (res && !res.passed) {
+        return `${GATE_LABELS[lvl]} failed${res.detail ? ` — ${res.detail}` : ""}`;
+      }
+    }
+  }
+  return null;
+}
+
+type VerdictTone = "success" | "error" | "warning" | "neutral";
+
+const TONE_CLASSES: Record<VerdictTone, string> = {
+  success: "border-valid/40 bg-valid/10",
+  error: "border-error/30 bg-error/10",
+  warning: "border-warn/30 bg-warn/10",
+  neutral: "border-border bg-surface-1",
+};
+
+function haltSentence(haltedBy: string, failed: number, notReached: number): string {
+  const rest =
+    notReached > 0
+      ? ` The remaining ${notReached} ${notReached === 1 ? "page was" : "pages were"} not reached.`
+      : "";
+  switch (haltedBy) {
+    case "consecutive_failures":
+      return `${failed} ${failed === 1 ? "page" : "pages"} failed in a row, so the agent halted to avoid wasting the rest.${rest}`;
+    case "max_cost_exceeded":
+      return `The run hit its cost limit and stopped.${rest}`;
+    case "rollback_failed":
+      return `A rollback failed, so the run stopped to avoid making it worse.${rest}`;
+    default:
+      return `The run halted early.${rest}`;
+  }
+}
+
+interface Verdict {
+  tone: VerdictTone;
+  title: string;
+  detail: string;
+}
+
+/** Map a finished run + its page groups to a single plain-English verdict. */
+function buildVerdict(summary: DoneSummary, groups: RunPageGroups): Verdict {
+  const fixed = groups.fixed.length;
+  const failed = groups.failed.length;
+  const notReached = groups.notReached.length;
+  const alreadyGood = groups.alreadyGood.length;
+  const total = fixed + failed + notReached + alreadyGood;
+  const needed = fixed + failed + notReached;
+
+  if (summary.killed) {
+    return {
+      tone: "neutral",
+      title: "Run stopped",
+      detail: "You stopped this run before it finished. Nothing was written to the theme.",
+    };
+  }
+  if (summary.apply?.status === "rolled_back") {
+    return {
+      tone: "warning",
+      title: "Changes rolled back — your store is untouched",
+      detail: "A live check failed after writing, so the agent restored the store exactly as it was. No broken schema is live.",
+    };
+  }
+  if (total === 0) {
+    return {
+      tone: "neutral",
+      title: "No pages found",
+      detail: "The scan returned no pages. Check the domain, or run with Specific URLs.",
+    };
+  }
+  if (needed === 0) {
+    return {
+      tone: "success",
+      title: "Everything already looks great",
+      detail: `All ${alreadyGood} ${alreadyGood === 1 ? "page" : "pages"} already had valid structured data — nothing to fix.`,
+    };
+  }
+  if (summary.haltedBy) {
+    return {
+      tone: "error",
+      title: `Stopped early — ${fixed} of ${needed} fixed`,
+      detail: haltSentence(summary.haltedBy, failed, notReached),
+    };
+  }
+  if (failed > 0) {
+    return {
+      tone: "warning",
+      title: `${fixed} of ${needed} pages ready · ${failed} need a look`,
+      detail: "Most pages are Google-ready. A few couldn't be fixed automatically — see the reason on each below.",
+    };
+  }
+  if (summary.dryRun) {
+    return {
+      tone: "success",
+      title: `${fixed} ${fixed === 1 ? "page is" : "pages are"} ready to go live`,
+      detail: "This is a preview — we validated valid, rich-eligible structured data for every page. Nothing is written yet. Review below, then apply.",
+    };
+  }
+  return {
+    tone: "success",
+    title: `Done — ${fixed} ${fixed === 1 ? "page is" : "pages are"} now Google-ready`,
+    detail: "Valid, rich-eligible structured data was written to your store and verified on the live page. Confirm it yourself with Google's Rich Results Test below.",
+  };
 }
 
 export default function AgentRunner({
@@ -75,7 +229,9 @@ export default function AgentRunner({
   const [requireTypesInput, setRequireTypesInput] = useState("Product");
   const [minOutcome, setMinOutcome] = useState<MinOutcome>("rich_results_eligible");
   const [urlsInput, setUrlsInput] = useState("");
-  const [dryRun, setDryRun] = useState(true);
+  // The active run's mode, set by which button was pressed. Preview = dry run (nothing
+  // written); Apply = live write. Driven by buttons, never a raw toggle the user must reason about.
+  const [lastDryRun, setLastDryRun] = useState(true);
 
   const [running, setRunning] = useState(false);
   const [killing, setKilling] = useState(false);
@@ -83,10 +239,16 @@ export default function AgentRunner({
   const [phase, setPhase] = useState<string | null>(null);
   const [counts, setCounts] = useState({ perceived: 0, queued: 0, acted: 0, satisfied: 0, unsatisfied: 0 });
   const [rows, setRows] = useState<Record<string, PageRow>>({});
+  const [perceivedUrls, setPerceivedUrls] = useState<string[]>([]);
   const [summary, setSummary] = useState<DoneSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [detail, setDetail] = useState<DetailState>({ status: "idle" });
+
   const runIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const requireTypesRef = useRef<HTMLInputElement | null>(null);
 
   // Cancel the in-flight stream if the operator navigates away mid-run, so the fetch
   // (and, via the route's cancel hook, the server-side run) doesn't dangle.
@@ -116,70 +278,83 @@ export default function AgentRunner({
       satisfied: ev.satisfied ?? prev.satisfied,
       unsatisfied: ev.unsatisfied ?? prev.unsatisfied,
     }));
+    // Accumulate every URL we observe so the done view can account for not-reached pages.
+    if (ev.url) {
+      const url = ev.url;
+      setPerceivedUrls((prev) => (prev.includes(url) ? prev : [...prev, url]));
+    }
     if (ev.phase === "act" && ev.url) {
-      setRows((prev) => ({ ...prev, [ev.url as string]: { url: ev.url as string, gates: ev.gates ?? null } }));
+      const url = ev.url;
+      setRows((prev) => ({ ...prev, [url]: { url, gates: ev.gates ?? null, outcome: ev.outcome } }));
     }
   }, []);
 
-  const startRun = useCallback(async () => {
-    setRunning(true);
-    setError(null);
-    setSummary(null);
-    setRows({});
-    setRunId(null);
-    runIdRef.current = null;
-    setPhase(null);
-    setCounts({ perceived: 0, queued: 0, acted: 0, satisfied: 0, unsatisfied: 0 });
+  const startRun = useCallback(
+    async (runDryRun: boolean) => {
+      setRunning(true);
+      setLastDryRun(runDryRun);
+      setError(null);
+      setSummary(null);
+      setRows({});
+      setPerceivedUrls([]);
+      setExpanded(new Set());
+      setDetail({ status: "idle" });
+      setRunId(null);
+      runIdRef.current = null;
+      setPhase(null);
+      setCounts({ perceived: 0, queued: 0, acted: 0, satisfied: 0, unsatisfied: 0 });
 
-    const requireTypes = requireTypesInput.split(",").map((s) => s.trim()).filter(Boolean);
-    const target: Record<string, unknown> = { scope, requireTypes, minOutcome };
-    if (scope === "url_list") {
-      target.urls = urlsInput.split(/\s+/).map((s) => s.trim()).filter(Boolean);
-    }
+      const requireTypes = requireTypesInput.split(",").map((s) => s.trim()).filter(Boolean);
+      const target: Record<string, unknown> = { scope, requireTypes, minOutcome };
+      if (scope === "url_list") {
+        target.urls = urlsInput.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+      }
 
-    const ac = new AbortController();
-    abortRef.current = ac;
-    try {
-      const res = await fetch("/api/agent/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ siteId, dryRun, target }),
-        signal: ac.signal,
-      });
-      if (!res.ok) {
-        const msg = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setError(msg.error ?? `HTTP ${res.status}`);
-        return;
-      }
-      if (!res.body) {
-        setError("No response stream");
-        return;
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-        for (const chunk of chunks) {
-          if (!chunk.startsWith("data: ")) continue;
-          try {
-            handleEvent(JSON.parse(chunk.slice(6)));
-          } catch {
-            // skip malformed chunk
+      const ac = new AbortController();
+      abortRef.current = ac;
+      try {
+        const res = await fetch("/api/agent/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ siteId, dryRun: runDryRun, target }),
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          const msg = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          setError(msg.error ?? `HTTP ${res.status}`);
+          return;
+        }
+        if (!res.body) {
+          setError("No response stream");
+          return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split("\n\n");
+          buffer = chunks.pop() ?? "";
+          for (const chunk of chunks) {
+            if (!chunk.startsWith("data: ")) continue;
+            try {
+              handleEvent(JSON.parse(chunk.slice(6)));
+            } catch {
+              // skip malformed chunk
+            }
           }
         }
+      } catch (e) {
+        if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (abortRef.current === ac) abortRef.current = null;
+        setRunning(false);
       }
-    } catch (e) {
-      if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (abortRef.current === ac) abortRef.current = null;
-      setRunning(false);
-    }
-  }, [siteId, dryRun, scope, requireTypesInput, minOutcome, urlsInput, handleEvent]);
+    },
+    [siteId, scope, requireTypesInput, minOutcome, urlsInput, handleEvent]
+  );
 
   const kill = useCallback(async () => {
     const id = runIdRef.current;
@@ -198,164 +373,236 @@ export default function AgentRunner({
     }
   }, []);
 
-  const rowList = Object.values(rows);
+  // Lazy-load per-page before/after from the run-detail endpoint, once, on first expand.
+  const loadDetail = useCallback(async () => {
+    const id = runIdRef.current;
+    if (!id) {
+      setDetail({ status: "error" });
+      return;
+    }
+    setDetail({ status: "loading" });
+    try {
+      const res = await fetch(`/api/agent/run/${id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { actions?: Record<string, unknown>[] };
+      const byUrl: Record<string, PageDetail> = {};
+      for (const a of json.actions ?? []) {
+        const url = String(a.url ?? "");
+        if (!url) continue;
+        byUrl[url] = {
+          before: a.schema_before ?? null,
+          after: a.schema_after ?? null,
+          outcome: a.outcome as string | undefined,
+        };
+      }
+      setDetail({ status: "ready", byUrl });
+    } catch {
+      setDetail({ status: "error" });
+    }
+  }, []);
+
+  const toggleRow = useCallback(
+    (url: string) => {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(url)) next.delete(url);
+        else next.add(url);
+        return next;
+      });
+      setDetail((d) => {
+        if (d.status === "idle" || d.status === "error") {
+          // fire-and-forget; loadDetail sets its own state
+          void loadDetail();
+          return { status: "loading" };
+        }
+        return d;
+      });
+    },
+    [loadDetail]
+  );
+
+  const focusGoal = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    requireTypesRef.current?.focus();
+  }, []);
+
+  const groups = summary
+    ? groupRunPages({
+        satisfied: summary.satisfied,
+        unsatisfied: summary.unsatisfied,
+        skipped: summary.skipped,
+        perceivedUrls,
+      })
+    : null;
+  const verdict = summary && groups ? buildVerdict(summary, groups) : null;
+  const leadGroup: keyof RunPageGroups | null = groups
+    ? groups.failed.length > 0 || summary?.haltedBy
+      ? "failed"
+      : groups.fixed.length > 0
+        ? "fixed"
+        : groups.alreadyGood.length > 0
+          ? "alreadyGood"
+          : "notReached"
+    : null;
+
+  const liveRows = Object.values(rows);
+
+  // After a clean PREVIEW that staged real fixes, the next step is to apply them live.
+  const canApply =
+    !!summary &&
+    summary.dryRun &&
+    !summary.killed &&
+    !summary.haltedBy &&
+    !!groups &&
+    groups.fixed.length > 0;
+  const appliedLive = !!summary && !summary.dryRun && summary.apply?.status === "applied";
 
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-8">
+    <div className="min-h-screen bg-surface-0 px-6 py-8">
       <div className="mx-auto max-w-4xl">
-        <div className="mb-6">
-          <Link href={`/site/${crawlId}`} className="text-sm text-indigo-600 hover:text-indigo-800">
+        <div className="mb-8">
+          <Link href={`/site/${crawlId}`} className="text-sm text-accent hover:text-accent-bright">
             ← Back to dashboard
           </Link>
-          <h1 className="mt-2 text-2xl font-semibold text-slate-900">Agent</h1>
-          <p className="text-sm text-slate-500">{domain}</p>
+          <h1 className="mt-4 font-serif text-3xl text-text-primary">
+            Make your products Google-ready
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-text-secondary">
+            SchemaGen reads every product page on{" "}
+            <span className="font-mono text-text-primary">{domain}</span>, writes valid
+            structured data, fixes anything Google would reject, and proves it on the live
+            page — so your products can show rich results and AI shopping tools can read them.
+          </p>
         </div>
 
-        {/* Goal form */}
-        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-700">Goal</h2>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-xs font-medium text-slate-600">Scope</span>
-              <select
-                value={scope}
-                onChange={(e) => setScope(e.target.value as GoalScope)}
-                disabled={running}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
-              >
-                {SCOPES.map((s) => (
-                  <option key={s.value} value={s.value}>{s.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-xs font-medium text-slate-600">Minimum outcome</span>
-              <select
-                value={minOutcome}
-                onChange={(e) => setMinOutcome(e.target.value as MinOutcome)}
-                disabled={running}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
-              >
-                <option value="valid">Valid</option>
-                <option value="rich_results_eligible">Rich-results eligible</option>
-              </select>
-            </label>
-            <label className="block sm:col-span-2">
-              <span className="text-xs font-medium text-slate-600">Required schema types (comma-separated)</span>
-              <input
-                value={requireTypesInput}
-                onChange={(e) => setRequireTypesInput(e.target.value)}
-                disabled={running}
-                placeholder="Product"
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
-              />
-            </label>
-            {scope === "url_list" && (
-              <label className="block sm:col-span-2">
-                <span className="text-xs font-medium text-slate-600">URLs (one per line)</span>
-                <textarea
-                  value={urlsInput}
-                  onChange={(e) => setUrlsInput(e.target.value)}
+        {/* Primary action card — dead simple: one button starts a safe preview. */}
+        <div className="rounded-lg border border-border bg-surface-card p-6 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-text-primary">
+                Step 1 — Preview the changes
+              </h2>
+              <p className="mt-1 text-sm text-text-secondary">
+                See exactly what we&apos;ll add to each page. Nothing is written to your store yet.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {running ? (
+                <button
+                  onClick={kill}
+                  disabled={!runId || killing}
+                  className="rounded-md bg-error px-5 py-3 text-sm font-bold text-surface-0 transition-all hover:opacity-90 disabled:opacity-40"
+                >
+                  {killing ? "Stopping…" : "Stop"}
+                </button>
+              ) : (
+                <button
+                  onClick={() => startRun(true)}
+                  className="btn-optimize rounded-md bg-accent px-6 py-3 text-sm font-bold text-surface-0 transition-all hover:bg-accent-bright"
+                >
+                  Preview changes
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Advanced — hidden by default so the common path is one click. */}
+          <details className="mt-5 border-t border-border pt-4">
+            <summary className="cursor-pointer text-xs font-medium text-text-muted hover:text-text-secondary">
+              Advanced settings
+            </summary>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-medium text-text-secondary">Scope</span>
+                <select
+                  value={scope}
+                  onChange={(e) => setScope(e.target.value as GoalScope)}
                   disabled={running}
-                  rows={4}
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs disabled:bg-slate-100"
+                  className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 text-sm text-text-primary disabled:opacity-50"
+                >
+                  {SCOPES.map((s) => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-text-secondary">Minimum outcome</span>
+                <select
+                  value={minOutcome}
+                  onChange={(e) => setMinOutcome(e.target.value as MinOutcome)}
+                  disabled={running}
+                  className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 text-sm text-text-primary disabled:opacity-50"
+                >
+                  <option value="valid">Valid</option>
+                  <option value="rich_results_eligible">Rich-results eligible</option>
+                </select>
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-medium text-text-secondary">Required schema types (comma-separated)</span>
+                <input
+                  ref={requireTypesRef}
+                  value={requireTypesInput}
+                  onChange={(e) => setRequireTypesInput(e.target.value)}
+                  disabled={running}
+                  placeholder="Product"
+                  className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 text-sm text-text-primary placeholder-text-muted disabled:opacity-50"
                 />
               </label>
-            )}
-          </div>
-
-          {/* Dry-run toggle */}
-          <div className="mt-4 flex items-center gap-3">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={dryRun}
-              onClick={() => setDryRun((v) => !v)}
-              disabled={running}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${dryRun ? "bg-indigo-600" : "bg-slate-300"}`}
-            >
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${dryRun ? "translate-x-6" : "translate-x-1"}`} />
-            </button>
-            <span className="text-sm text-slate-700">
-              Dry run {dryRun ? "on" : "off"}
-            </span>
-          </div>
-          {dryRun && (
-            <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
-              DRY RUN — schemas are staged and gated, but nothing is written to the theme.
+              {scope === "url_list" && (
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-medium text-text-secondary">URLs (one per line)</span>
+                  <textarea
+                    value={urlsInput}
+                    onChange={(e) => setUrlsInput(e.target.value)}
+                    disabled={running}
+                    rows={4}
+                    className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 font-mono text-xs text-text-primary disabled:opacity-50"
+                  />
+                </label>
+              )}
             </div>
-          )}
-
-          {/* Controls */}
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <button
-              onClick={startRun}
-              disabled={running}
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {running ? "Running…" : "Start run"}
-            </button>
-            <button
-              onClick={kill}
-              disabled={!running || !runId || killing}
-              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40"
-            >
-              {killing ? "Killing…" : "Kill"}
-            </button>
-            <button
-              disabled
-              title="Coming in Phase 5"
-              className="cursor-not-allowed rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-400"
-            >
-              Pause
-            </button>
-            <button
-              disabled
-              title="Coming in Phase 5"
-              className="cursor-not-allowed rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-400"
-            >
-              Resume
-            </button>
-          </div>
+          </details>
         </div>
 
         {error && (
-          <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="mt-4 rounded-md border border-error/30 bg-error-dim/20 px-4 py-3 text-sm text-error">
             {error}
           </div>
         )}
 
-        {/* Live progress */}
-        {(running || phase) && (
-          <div className="mt-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        {/* Live progress (while running, before the done summary lands) */}
+        {running && !summary && (
+          <div className="mt-4 rounded-lg border border-border bg-surface-card p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-700">Progress</h2>
+              <h2 className="text-sm font-semibold text-text-primary">
+                {lastDryRun ? "Previewing changes…" : "Applying to your store…"}
+              </h2>
               {phase && (
-                <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+                <span className="rounded-full bg-fix/20 px-2.5 py-0.5 text-xs font-medium text-fix-bright">
                   {phase}
                 </span>
               )}
             </div>
             <div className="mt-3 grid grid-cols-3 gap-3 text-center text-xs sm:grid-cols-5">
               {([
-                ["Perceived", counts.perceived],
+                ["Found", counts.perceived],
                 ["Queued", counts.queued],
-                ["Acted", counts.acted],
-                ["Satisfied", counts.satisfied],
-                ["Unsatisfied", counts.unsatisfied],
+                ["Processed", counts.acted],
+                ["Ready", counts.satisfied],
+                ["Need work", counts.unsatisfied],
               ] as const).map(([label, n]) => (
-                <div key={label} className="rounded-md bg-slate-50 px-2 py-2">
-                  <div className="text-lg font-semibold text-slate-900">{n}</div>
-                  <div className="text-slate-500">{label}</div>
+                <div key={label} className="rounded-md bg-surface-2 px-2 py-2">
+                  <div className="text-lg font-semibold text-text-primary">{n}</div>
+                  <div className="text-text-muted">{label}</div>
                 </div>
               ))}
             </div>
 
-            {rowList.length > 0 && (
-              <div className="mt-4 divide-y divide-slate-100">
-                {rowList.map((r) => (
-                  <div key={r.url} className="flex items-center justify-between gap-3 py-2">
-                    <span className="truncate font-mono text-xs text-slate-600" title={r.url}>{r.url}</span>
+            {liveRows.length > 0 && (
+              <div className="mt-4 divide-y divide-border">
+                {liveRows.map((r) => (
+                  <div key={r.url} className="flex flex-col gap-1 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                    <span className="break-all font-mono text-xs text-text-secondary sm:truncate" title={r.url}>{r.url}</span>
                     <GateRow gates={r.gates} />
                   </div>
                 ))}
@@ -364,33 +611,153 @@ export default function AgentRunner({
           </div>
         )}
 
-        {/* Summary + diff preview */}
-        {summary && (
-          <div className="mt-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-slate-700">Result</h2>
-              <StatusBadge summary={summary} />
-            </div>
-            <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-600 sm:grid-cols-4">
-              <div><dt className="text-slate-400">Pages touched</dt><dd className="font-medium text-slate-900">{summary.pagesTouched}</dd></div>
-              <div><dt className="text-slate-400">Satisfied</dt><dd className="font-medium text-slate-900">{summary.satisfied.length}</dd></div>
-              <div><dt className="text-slate-400">Unsatisfied</dt><dd className="font-medium text-slate-900">{summary.unsatisfied.length}</dd></div>
-              <div><dt className="text-slate-400">Mode</dt><dd className="font-medium text-slate-900">{summary.dryRun ? "Dry run" : "Live"}</dd></div>
-            </dl>
+        {/* Result — verdict, reason, next steps, grouped pages */}
+        {summary && groups && verdict && (
+          <div className={`mt-4 rounded-lg border p-6 shadow-sm ${TONE_CLASSES[verdict.tone]}`}>
+            <h2 className="text-lg font-semibold text-text-primary">{verdict.title}</h2>
+            <p className="mt-1 text-sm text-text-secondary">{verdict.detail}</p>
 
-            {summary.apply && (
-              <div className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                Apply status: <span className="font-medium text-slate-900">{summary.apply.status}</span>
-                {" "}({summary.apply.l4.filter((v) => v?.passed).length}/{summary.apply.l4.length} L4 passed)
+            {/* The headline next step: apply a clean preview to the live store. */}
+            {canApply && (
+              <div className="mt-4 rounded-md border border-accent/20 bg-accent/5 p-4">
+                <h3 className="text-sm font-semibold text-text-primary">
+                  Step 2 — Apply to your store
+                </h3>
+                <p className="mt-1 text-xs text-text-secondary">
+                  Writes the previewed structured data to your test theme, then re-checks the
+                  live page. If anything fails to render, it&apos;s rolled back automatically — your
+                  store is never left broken.
+                </p>
+                <button
+                  onClick={() => startRun(false)}
+                  disabled={running}
+                  className="btn-optimize mt-3 rounded-md bg-accent px-5 py-2.5 text-sm font-bold text-surface-0 transition-all hover:bg-accent-bright disabled:opacity-50"
+                >
+                  Apply to my store
+                </button>
               </div>
             )}
 
+            {/* Post-apply proof — let the customer verify on Google themselves. */}
+            {appliedLive && groups.fixed.length > 0 && (
+              <div className="mt-4 rounded-md border border-accent/20 bg-accent/5 p-4">
+                <h3 className="text-sm font-semibold text-text-primary">Prove it on Google</h3>
+                <p className="mt-1 text-xs text-text-secondary">
+                  Open any updated page in Google&apos;s free Rich Results Test — it should now read
+                  <span className="text-accent-bright"> Eligible</span>.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {groups.fixed.slice(0, 3).map((url) => (
+                    <a
+                      key={url}
+                      href={richResultsTestUrl(url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-md border border-accent/40 bg-transparent px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/10"
+                    >
+                      Test a page on Google ↗
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Next steps — only when something went wrong */}
+            {(verdict.tone === "error" || verdict.tone === "warning") && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  onClick={() => startRun(lastDryRun)}
+                  disabled={running}
+                  className="rounded-md bg-fix px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-fix-bright disabled:opacity-50"
+                >
+                  Try again
+                </button>
+                <button
+                  onClick={focusGoal}
+                  className="rounded-md border border-border bg-surface-1 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-2"
+                >
+                  Adjust settings
+                </button>
+              </div>
+            )}
+
+            {/* Counts */}
+            <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-text-secondary sm:grid-cols-4">
+              <div><dt className="text-text-muted">Ready</dt><dd className="font-medium text-text-primary">{groups.fixed.length}</dd></div>
+              <div><dt className="text-text-muted">Need work</dt><dd className="font-medium text-text-primary">{groups.failed.length}</dd></div>
+              <div><dt className="text-text-muted">Already good</dt><dd className="font-medium text-text-primary">{groups.alreadyGood.length}</dd></div>
+              <div><dt className="text-text-muted">Mode</dt><dd className="font-medium text-text-primary">{summary.dryRun ? "Preview" : "Live"}</dd></div>
+            </dl>
+            {summary.apply && (
+              <div className="mt-3 rounded-md bg-surface-1 px-3 py-2 text-xs text-text-secondary">
+                Apply status: <span className="font-medium text-text-primary">{summary.apply.status}</span>
+                {" "}({summary.apply.l4.filter((v) => v?.passed).length}/{summary.apply.l4.length} live-verified)
+              </div>
+            )}
+
+            {/* Pages — grouped, with a legend for the gate chips */}
+            <div className="mt-5 rounded-lg border border-border bg-surface-1 p-4">
+              <p className="text-xs text-text-muted">
+                Each page runs these checks in order:{" "}
+                <b className="text-text-secondary">Built</b> → <b className="text-text-secondary">Valid</b> → <b className="text-text-secondary">Rich-eligible</b> → <b className="text-text-secondary">No-regression</b> → <b className="text-text-secondary">Live-verified</b>.{" "}
+                <span className="text-accent-bright">✓ pass</span> · <span className="text-error">✗ fail</span> ·{" "}
+                <span className="text-text-muted">n/a not checked</span>.
+              </p>
+
+              <div className="mt-3 space-y-2">
+                <GroupSection
+                  title="Need work"
+                  emoji="⚠️"
+                  urls={groups.failed}
+                  rows={rows}
+                  open={leadGroup === "failed"}
+                  expandable
+                  expanded={expanded}
+                  detail={detail}
+                  onToggle={toggleRow}
+                />
+                <GroupSection
+                  title="Not reached"
+                  emoji="⏸"
+                  urls={groups.notReached}
+                  rows={rows}
+                  open={leadGroup === "notReached"}
+                  hint="The run halted before these pages."
+                  expanded={expanded}
+                  detail={detail}
+                  onToggle={toggleRow}
+                />
+                <GroupSection
+                  title={summary.dryRun ? "Ready to apply" : "Made Google-ready"}
+                  emoji="✅"
+                  urls={groups.fixed}
+                  rows={rows}
+                  open={leadGroup === "fixed"}
+                  expandable
+                  expanded={expanded}
+                  detail={detail}
+                  onToggle={toggleRow}
+                />
+                <GroupSection
+                  title="Already good"
+                  emoji="⏭"
+                  urls={groups.alreadyGood}
+                  rows={rows}
+                  open={leadGroup === "alreadyGood"}
+                  hint="These already had valid schema — nothing to do."
+                  expanded={expanded}
+                  detail={detail}
+                  onToggle={toggleRow}
+                />
+              </div>
+            </div>
+
             {summary.stagedSnippet && (
-              <details className="mt-4" open={summary.dryRun}>
-                <summary className="cursor-pointer text-xs font-medium text-indigo-600">
-                  Diff preview — snippet that {summary.dryRun ? "would be" : "was"} written
+              <details className="mt-4">
+                <summary className="cursor-pointer text-xs font-medium text-accent">
+                  View the exact code — what {summary.dryRun ? "would be" : "was"} written to your theme
                 </summary>
-                <pre className="mt-2 max-h-96 overflow-auto rounded-md bg-slate-900 p-3 text-[11px] leading-relaxed text-slate-100">
+                <pre className="mt-2 max-h-96 overflow-auto rounded-md bg-surface-0 p-3 text-[11px] leading-relaxed text-text-secondary">
                   {summary.stagedSnippet}
                 </pre>
               </details>
@@ -402,15 +769,137 @@ export default function AgentRunner({
   );
 }
 
-function StatusBadge({ summary }: { summary: DoneSummary }) {
-  const { status, killed } = summary;
-  const label = killed ? "killed" : status;
-  const cls = killed
-    ? "bg-red-100 text-red-700"
-    : status === "done"
-      ? "bg-emerald-100 text-emerald-700"
-      : status === "rolled_back"
-        ? "bg-amber-100 text-amber-700"
-        : "bg-red-100 text-red-700";
-  return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${cls}`}>{label}</span>;
+/** A collapsible group of pages (Need work / Not reached / Ready / Already good). */
+function GroupSection({
+  title,
+  emoji,
+  urls,
+  rows,
+  open,
+  hint,
+  expandable,
+  expanded,
+  detail,
+  onToggle,
+}: {
+  title: string;
+  emoji: string;
+  urls: string[];
+  rows: Record<string, PageRow>;
+  open: boolean;
+  hint?: string;
+  expandable?: boolean;
+  expanded: Set<string>;
+  detail: DetailState;
+  onToggle: (url: string) => void;
+}) {
+  if (urls.length === 0) return null;
+  return (
+    <details open={open} className="rounded-md border border-border">
+      <summary className="flex min-h-[44px] cursor-pointer items-center gap-2 px-3 py-2 text-sm font-medium text-text-primary">
+        <span aria-hidden>{emoji}</span>
+        <span>{title}</span>
+        <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-text-secondary">{urls.length}</span>
+      </summary>
+      {hint && <p className="px-3 pb-2 text-xs text-text-muted">{hint}</p>}
+      <div className="divide-y divide-border border-t border-border">
+        {urls.map((url) => (
+          <PageRowItem
+            key={url}
+            url={url}
+            row={rows[url]}
+            expandable={!!expandable}
+            isExpanded={expanded.has(url)}
+            detail={detail}
+            onToggle={onToggle}
+          />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function PageRowItem({
+  url,
+  row,
+  expandable,
+  isExpanded,
+  detail,
+  onToggle,
+}: {
+  url: string;
+  row: PageRow | undefined;
+  expandable: boolean;
+  isExpanded: boolean;
+  detail: DetailState;
+  onToggle: (url: string) => void;
+}) {
+  const reason = rowReason(row);
+
+  const header = (
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+      <span className="break-all font-mono text-xs text-text-secondary sm:truncate" title={url}>{url}</span>
+      {row?.gates && <GateRow gates={row.gates} />}
+    </div>
+  );
+
+  return (
+    <div className="px-3 py-2">
+      {expandable ? (
+        <button
+          type="button"
+          onClick={() => onToggle(url)}
+          aria-expanded={isExpanded}
+          className="flex min-h-[44px] w-full flex-col justify-center gap-1 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          {header}
+        </button>
+      ) : (
+        <div className="min-h-[36px]">{header}</div>
+      )}
+
+      {reason && <p className="mt-1 text-xs text-warn">{reason}</p>}
+
+      {expandable && isExpanded && (
+        <div className="mt-2">
+          <PageDetailView url={url} detail={detail} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PageDetailView({ url, detail }: { url: string; detail: DetailState }) {
+  if (detail.status === "loading") {
+    return <p className="text-xs text-text-muted">Loading details…</p>;
+  }
+  if (detail.status === "error") {
+    return <p className="text-xs text-text-muted">Details unavailable.</p>;
+  }
+  if (detail.status !== "ready") return null;
+  const d = detail.byUrl[url];
+  if (!d) {
+    return <p className="text-xs text-text-muted">Details unavailable for this page.</p>;
+  }
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <SchemaBlock label="Before" value={d.before} />
+      <SchemaBlock label="After" value={d.after} />
+    </div>
+  );
+}
+
+function SchemaBlock({ label, value }: { label: string; value: unknown }) {
+  const text =
+    value == null || (Array.isArray(value) && value.length === 0)
+      ? "—"
+      : JSON.stringify(value, null, 2);
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-text-muted">{label}</div>
+      <pre className="max-h-64 overflow-auto rounded-md bg-surface-0 p-2 text-[11px] leading-relaxed text-text-secondary">
+        {text}
+      </pre>
+    </div>
+  );
 }

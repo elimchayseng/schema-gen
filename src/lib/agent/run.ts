@@ -334,6 +334,7 @@ export async function runGoal(
             phase: "act",
             url: ex.url,
             gates: ex.action.gates,
+            outcome: ex.action.outcome,
             acted: pagesTouched,
             satisfied: satisfied.length,
             unsatisfied: unsatisfied.length,

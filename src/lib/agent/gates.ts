@@ -79,7 +79,18 @@ export function runGates(input: GateInput): GateResults {
   if (!L0.passed) {
     L1 = fail("skipped (L0 failed)");
   } else if (!validations.every((v) => v.valid)) {
-    L1 = fail("one or more candidate schemas are invalid");
+    // Name the actual validation errors so the operator sees WHAT is wrong (e.g. a Product
+    // missing its required `offers`), not a generic "invalid". Reuses the per-candidate
+    // validations already computed above.
+    const problems = validations
+      .map((v, i) => {
+        if (v.valid) return null;
+        const type = typesOf(i)[0] ?? "schema";
+        const msgs = v.errors.slice(0, 2).map((e) => e.message);
+        return msgs.length ? `${type}: ${msgs.join("; ")}` : null;
+      })
+      .filter((p): p is string => p !== null);
+    L1 = fail(problems.length ? problems.join(" · ") : "one or more candidate schemas are invalid");
   } else {
     const missing = requireTypes.find(
       (t) =>

@@ -187,6 +187,13 @@ export interface AgentProgressEvent {
   url?: string;
   /** L0–L4 gate results for this page (act / apply). */
   gates?: GateResults | null;
+  /**
+   * The executor's per-page outcome for this page (act). Distinguishes a clean gate
+   * rejection ("gate_failed") from an upstream AI/processing failure
+   * ("processing_failed: …") and a staged success ("staged"). Phase 7 surfaces this as
+   * the live, visible failure reason so the operator never has to hover a chip.
+   */
+  outcome?: string;
   /** Running counts. */
   perceived?: number;
   queued?: number;

@@ -131,6 +131,9 @@ describe("runGoal progress streaming (Phase 4)", () => {
     expect(act?.gates).not.toBeNull();
     expect(act?.gates?.L1.passed).toBe(true);
     expect(act?.acted).toBe(1);
+    // Phase 7: the act event carries the executor outcome so the UI can show WHY a page
+    // ended up where it did, live, without hovering. B optimizes to a valid Product -> staged.
+    expect(act?.outcome).toBe("staged");
   });
 
   it("a throwing onProgress never aborts the run", async () => {
