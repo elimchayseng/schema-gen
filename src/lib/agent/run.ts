@@ -19,6 +19,11 @@ import { hasCriticalIssue } from "./gates";
 import { l4Verify } from "./verify";
 import { applyEntries, makeShopifyOps, type ApplyItem } from "./apply";
 import {
+  getStorefrontCookie,
+  isStorefrontPasswordConfigured,
+  looksPasswordGated,
+} from "@/lib/shopify/storefront-password";
+import {
   makeBreakers,
   recordOutcome,
   recordRollbackFailure,
@@ -151,7 +156,17 @@ function resolveWriteThemeId(): number {
  * via Shopify's `?preview_theme_id=` param, so verification reads the exact bytes the
  * write produced, not the currently-published theme.
  */
-function makeLiveVerify(target: GoalTarget, themeId: number) {
+function makeLiveVerify(target: GoalTarget, themeId: number, shop: string) {
+  // Dev stores (and any store with the storefront password on) redirect every
+  // unauthenticated request to /password, so L4 would never see the rendered schema.
+  // Obtain the storefront_digest cookie once (when SHOPIFY_STOREFRONT_PASSWORD is set)
+  // and send it on every verify fetch so the real page renders.
+  let cookiePromise: Promise<string | null> | null = null;
+  const getCookie = () => {
+    if (!cookiePromise) cookiePromise = getStorefrontCookie(shop);
+    return cookiePromise;
+  };
+
   return (url: string, _entry: SnippetEntry) => {
     void _entry;
     const previewUrl = `${url}${url.includes("?") ? "&" : "?"}preview_theme_id=${themeId}`;
@@ -160,8 +175,18 @@ function makeLiveVerify(target: GoalTarget, themeId: number) {
       requireTypes: target.requireTypes,
       minOutcome: target.minOutcome,
       fetchHtml: async (u) => {
-        const r = await fetchPage(u);
+        const cookie = await getCookie();
+        const r = await fetchPage(u, cookie ? { headers: { Cookie: cookie } } : {});
         if (r.error || !r.html) throw new Error(r.error ?? "empty response");
+        // Turn the silent "no JSON-LD rendered" rollback into an actionable cause when
+        // the storefront is password-gated and we couldn't authenticate past it.
+        if (looksPasswordGated(r.finalUrl, r.html)) {
+          throw new Error(
+            isStorefrontPasswordConfigured()
+              ? "storefront is password-protected and the configured SHOPIFY_STOREFRONT_PASSWORD was rejected"
+              : "storefront is password-protected — set SHOPIFY_STOREFRONT_PASSWORD (Online Store → Preferences) or disable the storefront password so the live page can be verified"
+          );
+        }
         return r.html;
       },
     });
@@ -335,6 +360,9 @@ export async function runGoal(
             url: ex.url,
             gates: ex.action.gates,
             outcome: ex.action.outcome,
+            // The repaired JSON-LD this page would inject — surfaced inline so the UI can
+            // show a per-product schema dropdown in the preview.
+            schemaAfter: ex.action.schemaAfter,
             acted: pagesTouched,
             satisfied: satisfied.length,
             unsatisfied: unsatisfied.length,
@@ -382,7 +410,7 @@ export async function runGoal(
         shop,
         items: applyItems,
         ops: makeShopifyOps(),
-        verify: makeLiveVerify(goal.target, themeId),
+        verify: makeLiveVerify(goal.target, themeId, shop),
         persistBackup: (assetKey, valueBefore) =>
           backupRow(runId, shop, themeId, assetKey, valueBefore),
       });

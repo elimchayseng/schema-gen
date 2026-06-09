@@ -188,6 +188,12 @@ export interface AgentProgressEvent {
   /** L0–L4 gate results for this page (act / apply). */
   gates?: GateResults | null;
   /**
+   * The exact JSON-LD that would be injected for this page (act). Carried on the stream so
+   * the dashboard can show a per-product "structured data to be injected" dropdown inline,
+   * without a follow-up DB read. A single object or an array of objects.
+   */
+  schemaAfter?: unknown;
+  /**
    * The executor's per-page outcome for this page (act). Distinguishes a clean gate
    * rejection ("gate_failed") from an upstream AI/processing failure
    * ("processing_failed: …") and a staged success ("staged"). Phase 7 surfaces this as

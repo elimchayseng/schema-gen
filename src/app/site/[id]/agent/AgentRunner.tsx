@@ -34,6 +34,8 @@ interface PageRow {
   url: string;
   gates: GateResults | null;
   outcome?: string;
+  /** The exact JSON-LD that would be injected for this page (from the stream). */
+  schemaAfter?: unknown;
 }
 
 /** Lazily-loaded per-page before/after, fetched from the run-detail endpoint on expand. */
@@ -285,7 +287,10 @@ export default function AgentRunner({
     }
     if (ev.phase === "act" && ev.url) {
       const url = ev.url;
-      setRows((prev) => ({ ...prev, [url]: { url, gates: ev.gates ?? null, outcome: ev.outcome } }));
+      setRows((prev) => ({
+        ...prev,
+        [url]: { url, gates: ev.gates ?? null, outcome: ev.outcome, schemaAfter: ev.schemaAfter },
+      }));
     }
   }, []);
 
@@ -862,42 +867,68 @@ function PageRowItem({
 
       {expandable && isExpanded && (
         <div className="mt-2">
-          <PageDetailView url={url} detail={detail} />
+          <PageDetailView url={url} detail={detail} injected={row?.schemaAfter} />
         </div>
       )}
     </div>
   );
 }
 
-function PageDetailView({ url, detail }: { url: string; detail: DetailState }) {
-  if (detail.status === "loading") {
-    return <p className="text-xs text-text-muted">Loading details…</p>;
-  }
-  if (detail.status === "error") {
-    return <p className="text-xs text-text-muted">Details unavailable.</p>;
-  }
-  if (detail.status !== "ready") return null;
-  const d = detail.byUrl[url];
-  if (!d) {
-    return <p className="text-xs text-text-muted">Details unavailable for this page.</p>;
-  }
+function PageDetailView({
+  url,
+  detail,
+  injected,
+}: {
+  url: string;
+  detail: DetailState;
+  injected: unknown;
+}) {
+  // The injected schema comes straight off the live stream, so it renders instantly with
+  // no spinner or DB round-trip — this is the "what will be added to this product" view.
+  const dbDetail = detail.status === "ready" ? detail.byUrl[url] : undefined;
+  const before = dbDetail?.before;
+  // Fall back to the DB "after" only if the stream didn't carry one (older runs).
+  const injectedValue =
+    injected != null && !(Array.isArray(injected) && injected.length === 0)
+      ? injected
+      : dbDetail?.after;
+
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      <SchemaBlock label="Before" value={d.before} />
-      <SchemaBlock label="After" value={d.after} />
+    <div className="space-y-2">
+      <SchemaBlock label="Structured data to be injected" value={injectedValue} highlight />
+      {before != null && (Array.isArray(before) ? before.length > 0 : true) && (
+        <SchemaBlock label="Before (current page)" value={before} />
+      )}
+      {detail.status === "loading" && before == null && (
+        <p className="text-xs text-text-muted">Loading the page&apos;s current schema…</p>
+      )}
     </div>
   );
 }
 
-function SchemaBlock({ label, value }: { label: string; value: unknown }) {
+function SchemaBlock({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: unknown;
+  highlight?: boolean;
+}) {
   const text =
     value == null || (Array.isArray(value) && value.length === 0)
       ? "—"
       : JSON.stringify(value, null, 2);
   return (
     <div>
-      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-text-muted">{label}</div>
-      <pre className="max-h-64 overflow-auto rounded-md bg-surface-0 p-2 text-[11px] leading-relaxed text-text-secondary">
+      <div
+        className={`mb-1 text-[11px] font-medium uppercase tracking-wide ${highlight ? "text-accent-bright" : "text-text-muted"}`}
+      >
+        {label}
+      </div>
+      <pre
+        className={`max-h-72 overflow-auto rounded-md p-2 text-[11px] leading-relaxed text-text-secondary ${highlight ? "bg-surface-0 ring-1 ring-accent/20" : "bg-surface-0"}`}
+      >
         {text}
       </pre>
     </div>
