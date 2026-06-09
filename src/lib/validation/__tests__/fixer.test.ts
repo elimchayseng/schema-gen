@@ -83,6 +83,65 @@ describe("fixSchema", () => {
     expect(offers.availability).toBe("https://schema.org/InStock");
   });
 
+  it("removes a redundant misplaced property when the parent already has it", () => {
+    // sku on BOTH Product and Offer — can't move (Product has one), so drop the Offer copy.
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Test Product",
+      sku: "PROD-1",
+      image: "https://x.com/i.jpg",
+      offers: {
+        "@type": "Offer",
+        price: 49,
+        priceCurrency: "USD",
+        sku: "OFFER-1",
+        availability: "https://schema.org/InStock",
+      },
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    const offers = result.fixed.offers as Record<string, unknown>;
+    expect(offers.sku).toBeUndefined();
+    expect(result.fixed.sku).toBe("PROD-1"); // the Product's own sku is untouched
+    expect(result.validationAfter.valid).toBe(true);
+  });
+
+  it("reduces an image given as an ImageObject to its URL string", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Test Product",
+      image: { "@type": "ImageObject", url: "https://x.com/i.jpg" },
+      offers: {
+        "@type": "Offer",
+        price: 49,
+        priceCurrency: "USD",
+        availability: "https://schema.org/InStock",
+      },
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    expect(result.fixed.image).toBe("https://x.com/i.jpg");
+    expect(result.validationAfter.valid).toBe(true);
+  });
+
+  it("reduces an image given as an array of ImageObjects to a single URL string", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Test Product",
+      image: [{ "@type": "ImageObject", url: "https://x.com/a.jpg" }],
+      offers: {
+        "@type": "Offer",
+        price: 49,
+        priceCurrency: "USD",
+        availability: "https://schema.org/InStock",
+      },
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    expect(result.fixed.image).toBe("https://x.com/a.jpg");
+    expect(result.validationAfter.valid).toBe(true);
+  });
+
   it("expands enum shorthand to full URL", () => {
     const schema = {
       "@context": "https://schema.org",
@@ -237,7 +296,7 @@ describe("fixSchema", () => {
     expect(result.fixes.length).toBeGreaterThanOrEqual(4);
   });
 
-  it("does not move property if parent already has it", () => {
+  it("drops a misplaced property (without overwriting) when the parent already has it", () => {
     const schema = {
       "@context": "https://schema.org",
       "@type": "Product",
@@ -247,17 +306,17 @@ describe("fixSchema", () => {
         "@type": "Offer",
         price: 29.99,
         priceCurrency: "USD",
-        color: "Red", // would conflict with existing Product.color
+        color: "Red", // conflicts with the Product's own color
       },
     };
 
     const result = fixSchema(schema as Record<string, unknown>);
     const offers = result.fixed.offers as Record<string, unknown>;
 
-    // Parent already has color, so don't overwrite
+    // The Product's own color is authoritative and is never overwritten…
     expect(result.fixed.color).toBe("Blue");
-    // color stays on Offer since we can't safely move it
-    expect(offers.color).toBe("Red");
+    // …and the redundant copy is removed from Offer (leaving it there is invalid).
+    expect(offers.color).toBeUndefined();
   });
 
   it("handles itemCondition enum shorthand", () => {

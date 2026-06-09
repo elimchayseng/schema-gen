@@ -15,12 +15,14 @@ function brokenPioneerCarryCandidates(): Record<string, unknown>[] {
       "@type": "Product",
       name: "Molecule Cardholder",
       description: "A minimal leather cardholder.",
-      image: "https://pioneercarry.com/img/molecule.jpg",
+      sku: "MOL-001",
+      // image given as an ImageObject, not a URL string (Shopify/Yoast shape)
+      image: { "@type": "ImageObject", url: "https://pioneercarry.com/img/molecule.jpg" },
       offers: {
         "@type": "Offer",
         price: 49,
         priceCurrency: "USD",
-        sku: "MOL-001", // belongs on Product
+        sku: "MOL-001", // redundant copy on Offer — must be dropped
         availability: "http://schema.org/InStock", // wrong protocol
       },
     },

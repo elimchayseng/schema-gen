@@ -100,7 +100,9 @@ function fixObject(
         const value = obj[key];
         const path = joinPath(basePath, key);
 
-        // Only move if parent doesn't already have this property
+        // Move it up if the parent doesn't have it yet; otherwise the misplaced copy
+        // is redundant (the parent already carries the right value) — drop it so it
+        // can't keep failing validation. Either way the property leaves the wrong type.
         if (!(key in parent.obj) || parent.obj[key] === undefined) {
           parent.obj[key] = value;
           delete obj[key];
@@ -108,6 +110,13 @@ function fixObject(
             path,
             code: "INVALID_PROPERTY_PLACEMENT",
             description: `Moved '${key}' from ${typeName} to ${parent.typeName}`,
+          });
+        } else {
+          delete obj[key];
+          fixes.push({
+            path,
+            code: "INVALID_PROPERTY_PLACEMENT",
+            description: `Removed redundant '${key}' from ${typeName} (already present on ${parent.typeName})`,
           });
         }
       }
@@ -126,6 +135,29 @@ function fixObject(
   }
 }
 
+/**
+ * Pull a URL string out of the many shapes a URL-valued property arrives in:
+ * a bare string, an `ImageObject`/object with `url`/`contentUrl`/`@id`/`src`, or an
+ * array of any of those (Shopify apps and LLMs both love to wrap image URLs in objects).
+ */
+function extractUrlLike(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() ? value : null;
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const u = extractUrlLike(v);
+      if (u) return u;
+    }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    for (const k of ["url", "contentUrl", "@id", "src"]) {
+      if (typeof o[k] === "string" && o[k]) return o[k] as string;
+    }
+  }
+  return null;
+}
+
 function fixValue(
   container: Record<string, unknown>,
   key: string,
@@ -136,6 +168,23 @@ function fixValue(
   current: { obj: Record<string, unknown>; typeName: string }
 ): void {
   if (value === undefined || value === null || value === "") return;
+
+  // URL coercion: a URL-valued property (image, logo, url, …) given as an object
+  // ({"@type":"ImageObject","url":…}) or an array of strings/objects is reduced to a
+  // single URL string. Runs before the generic array handling so `image: [ImageObject]`
+  // and `image: {ImageObject}` are both handled, not just arrays of plain strings.
+  if (propDef.valueType === "URL" && typeof value !== "string") {
+    const url = extractUrlLike(value);
+    if (url) {
+      container[key] = url;
+      fixes.push({
+        path,
+        code: "INVALID_PROPERTY_TYPE",
+        description: `Reduced '${key}' to its URL string`,
+      });
+      return;
+    }
+  }
 
   // Array-to-scalar coercion: property expects URL/Text but LLM gave an array
   if (
