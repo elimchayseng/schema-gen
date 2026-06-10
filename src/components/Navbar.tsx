@@ -6,7 +6,8 @@ import { useAuth } from "@/components/AuthProvider";
 import { createBrowserClient } from "@/lib/supabase";
 
 const navItems = [
-  { href: "/", label: "Scan" },
+  { href: "/", label: "Home" },
+  { href: "/#history", label: "History" },
   { href: "/editor", label: "Schemas" },
 ];
 
@@ -58,7 +59,7 @@ export default function Navbar() {
           </div>
         </div>
 
-        {user && (
+        {user ? (
           <div className="flex items-center gap-3">
             <span className="max-w-[140px] truncate font-mono text-[10px] text-text-muted">
               {user.email}
@@ -70,6 +71,13 @@ export default function Navbar() {
               Sign Out
             </button>
           </div>
+        ) : (
+          <Link
+            href="/login"
+            className="rounded-sm px-2 py-1 text-[10px] font-medium text-text-muted transition-colors hover:text-text-secondary"
+          >
+            Log In
+          </Link>
         )}
       </div>
     </nav>
