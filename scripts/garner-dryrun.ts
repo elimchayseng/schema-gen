@@ -53,7 +53,9 @@ async function main() {
   const t0 = Date.now();
   const result = await runGoal(goal, {
     dryRun: true,
-    concurrency: 4,
+    // 2, not 4: each page fans out several refinement calls; halving the page
+    // fan-out keeps the inference endpoint under its congestion threshold.
+    concurrency: 2,
     onProgress: (ev) => {
       const bits = [
         ev.phase,

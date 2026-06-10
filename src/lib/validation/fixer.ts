@@ -22,9 +22,78 @@ export function fixSchema(schema: Record<string, unknown>): FixResult {
     fixObject(fixed, typeName, "$", fixes, null);
   }
 
+  // 5. Nested Organization without a url (publisher/seller/etc.): our quality bar
+  // requires Organization.url, but generators routinely emit a name-only publisher.
+  // The document itself knows the site — derive the url deterministically from the
+  // document's own absolute URL rather than asking the LLM to repair it.
+  fixNestedOrganizationUrl(fixed, fixes);
+
   const validationAfter = validateSchema(fixed);
 
   return { original, fixed, fixes, validationBefore, validationAfter };
+}
+
+/** First absolute http(s) URL that anchors this document (url / mainEntityOfPage / @id / offers.url). */
+function findDocumentUrl(obj: Record<string, unknown>): string | null {
+  const candidates: unknown[] = [
+    obj["url"],
+    obj["mainEntityOfPage"],
+    (obj["mainEntityOfPage"] as Record<string, unknown> | undefined)?.["@id"],
+    obj["@id"],
+    (obj["offers"] as Record<string, unknown> | undefined)?.["url"],
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && /^https?:\/\//.test(c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Add the site origin as `url` to NESTED Organization nodes that lack one.
+ * Root-level Organizations are left to the generator/repair loop — at the root the
+ * url is a content decision; nested (publisher, seller) it is mechanical.
+ */
+function fixNestedOrganizationUrl(
+  root: Record<string, unknown>,
+  fixes: FixApplied[]
+): void {
+  const docUrl = findDocumentUrl(root);
+  if (!docUrl) return;
+  let origin: string;
+  try {
+    origin = new URL(docUrl).origin;
+  } catch {
+    return;
+  }
+
+  const isOrganization = (v: Record<string, unknown>): boolean => {
+    const t = v["@type"];
+    return t === "Organization" || (Array.isArray(t) && t.includes("Organization"));
+  };
+  const hasUrl = (v: Record<string, unknown>): boolean =>
+    typeof v["url"] === "string" && v["url"].trim() !== "";
+
+  const visit = (value: unknown, path: string, isRoot: boolean): void => {
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => visit(v, `${path}[${i}]`, isRoot));
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    const obj = value as Record<string, unknown>;
+    if (!isRoot && isOrganization(obj) && !hasUrl(obj)) {
+      obj["url"] = origin;
+      fixes.push({
+        path: joinPath(path, "url"),
+        code: "MISSING_REQUIRED",
+        description: `Added url "${origin}" to nested Organization (derived from the document URL)`,
+      });
+    }
+    for (const key of Object.keys(obj)) {
+      if (key.startsWith("@")) continue;
+      visit(obj[key], joinPath(path, key), false);
+    }
+  };
+  visit(root, "$", true);
 }
 
 function fixContext(

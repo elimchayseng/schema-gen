@@ -360,4 +360,77 @@ describe("fixSchema", () => {
       result.validationAfter.errors.length
     ).toBeLessThan(result.validationBefore.errors.length);
   });
+
+  it("adds url to a nested publisher Organization from the document URL", () => {
+    // The garnerandtow dry-run case: generated BlogPosting carries a name-only
+    // publisher; our Organization quality bar wants url, and the document knows it.
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: "Urban cycling in fall",
+      author: { "@type": "Person", name: "G&T" },
+      datePublished: "2026-01-01",
+      url: "https://garnerandtow.com/blogs/press/urban-cycling",
+      publisher: { "@type": "Organization", name: "Garner and Tow" },
+    };
+
+    const result = fixSchema(schema as Record<string, unknown>);
+
+    const publisher = (result.fixed as { publisher: { url?: string } }).publisher;
+    expect(publisher.url).toBe("https://garnerandtow.com");
+    expect(
+      result.fixes.some(
+        (f) => f.path === "publisher.url" && f.code === "MISSING_REQUIRED"
+      )
+    ).toBe(true);
+    expect(
+      result.validationAfter.errors.filter((e) =>
+        e.message.includes("'url' is missing from Organization")
+      )
+    ).toHaveLength(0);
+  });
+
+  it("leaves a root Organization and url-carrying nested Organizations alone", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "Garner and Tow",
+      // No url on the ROOT org: that's a content decision, not mechanical — no fix.
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    expect((result.fixed as { url?: string }).url).toBeUndefined();
+
+    const withUrl = {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: "t",
+      author: { "@type": "Person", name: "a" },
+      datePublished: "2026-01-01",
+      url: "https://garnerandtow.com/x",
+      publisher: {
+        "@type": "Organization",
+        name: "G&T",
+        url: "https://example.com/keep-me",
+      },
+    };
+    const r2 = fixSchema(withUrl as Record<string, unknown>);
+    expect(
+      (r2.fixed as { publisher: { url: string } }).publisher.url
+    ).toBe("https://example.com/keep-me");
+  });
+
+  it("does nothing when the document carries no absolute URL", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: "t",
+      author: { "@type": "Person", name: "a" },
+      datePublished: "2026-01-01",
+      publisher: { "@type": "Organization", name: "G&T" },
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    expect(
+      (result.fixed as { publisher: { url?: string } }).publisher.url
+    ).toBeUndefined();
+  });
 });
