@@ -31,6 +31,12 @@ export default function AgentHero() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Optional one-time Shopify connection — unlocks the staging->publish live
+  // apply. All-or-nothing: the API rejects partial triples.
+  const [shopDomain, setShopDomain] = useState("");
+  const [appKey, setAppKey] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [storefrontPassword, setStorefrontPassword] = useState("");
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const { startScan, step } = useScan();
@@ -50,7 +56,17 @@ export default function AgentHero() {
       const res = await fetch("/api/agent/provision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({
+          url: url.trim(),
+          ...(shopDomain.trim() && {
+            shopDomain: shopDomain.trim(),
+            appKey: appKey.trim(),
+            appSecret: appSecret.trim(),
+            ...(storefrontPassword.trim() && {
+              storefrontPassword: storefrontPassword.trim(),
+            }),
+          }),
+        }),
       });
 
       if (res.status === 401 || res.redirected) {
@@ -132,6 +148,72 @@ export default function AgentHero() {
             {busy ? "Setting up…" : "Optimize my store"}
           </button>
         </div>
+        {/* One-time store connection — the only setup the merchant ever does.
+            Optional here: without it the agent still scans, validates, and
+            previews; with it, the live staging->publish apply unlocks. */}
+        <details className="mt-4 rounded-md border border-border bg-surface-card">
+          <summary className="cursor-pointer px-4 py-3 text-xs font-medium text-text-secondary hover:text-text-primary">
+            Connect your Shopify store (one-time, unlocks automatic publishing)
+          </summary>
+          <div className="grid gap-3 border-t border-border px-4 py-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
+                myshopify domain
+              </span>
+              <input
+                type="text"
+                value={shopDomain}
+                onChange={(e) => setShopDomain(e.target.value)}
+                placeholder="your-store.myshopify.com"
+                className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 font-mono text-xs text-text-primary placeholder-text-muted focus:border-fix focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
+                Storefront password{" "}
+                <span className="normal-case text-text-muted">(if gated)</span>
+              </span>
+              <input
+                type="password"
+                value={storefrontPassword}
+                onChange={(e) => setStorefrontPassword(e.target.value)}
+                autoComplete="off"
+                className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 font-mono text-xs text-text-primary focus:border-fix focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
+                App API key
+              </span>
+              <input
+                type="text"
+                value={appKey}
+                onChange={(e) => setAppKey(e.target.value)}
+                autoComplete="off"
+                className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 font-mono text-xs text-text-primary focus:border-fix focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
+                App API secret
+              </span>
+              <input
+                type="password"
+                value={appSecret}
+                onChange={(e) => setAppSecret(e.target.value)}
+                autoComplete="off"
+                className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 font-mono text-xs text-text-primary focus:border-fix focus:outline-none"
+              />
+            </label>
+            <p className="text-[11px] leading-relaxed text-text-muted sm:col-span-2">
+              Create an app with <code className="text-text-secondary">read_themes</code>,{" "}
+              <code className="text-text-secondary">write_themes</code>,{" "}
+              <code className="text-text-secondary">read_products</code> scopes —
+              see the setup guide. Credentials are stored server-side and never
+              shown again.
+            </p>
+          </div>
+        </details>
       </form>
 
       {error && (
