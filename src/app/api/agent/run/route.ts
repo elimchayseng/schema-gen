@@ -6,6 +6,7 @@ import type {
   Goal,
   GoalScope,
   MinOutcome,
+  WriteThemeStrategy,
 } from "@/lib/agent";
 
 /**
@@ -25,9 +26,19 @@ import type {
 const VALID_SCOPES: GoalScope[] = ["site", "all_products", "all_pages", "url_list"];
 const VALID_OUTCOMES: MinOutcome[] = ["valid", "rich_results_eligible"];
 
+/**
+ * Client-friendly string enum for RunOptions.writeTheme (issues #25/#26).
+ * "env" (default) keeps today's SHOPIFY_TEST_THEME_ID behavior; the staging
+ * modes duplicate the published theme and require the site to have a connected
+ * shop (sites.shop_domain set via /api/agent/provision).
+ */
+const VALID_WRITE_THEMES = ["env", "staging", "staging_publish"] as const;
+type WriteThemeParam = (typeof VALID_WRITE_THEMES)[number];
+
 interface RunRequestBody {
   siteId?: string;
   dryRun?: boolean;
+  writeTheme?: string;
   target?: {
     scope?: string;
     urls?: string[];
@@ -64,16 +75,42 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "siteId is required" }, { status: 400 });
   }
 
-  // Ownership: the site must belong to the authenticated user.
+  // Ownership: the site must belong to the authenticated user. shop_domain
+  // rides along so the staging write modes can verify the site is provisioned.
   const { data: site, error: siteError } = await supabase
     .from("sites")
-    .select("id")
+    .select("id, shop_domain")
     .eq("id", siteId)
     .eq("user_id", user.id)
     .single();
   if (siteError || !site) {
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
+
+  // writeTheme: client-friendly string enum → RunOptions.WriteThemeStrategy.
+  const writeThemeParam = (body.writeTheme ?? "env") as WriteThemeParam;
+  if (!VALID_WRITE_THEMES.includes(writeThemeParam)) {
+    return NextResponse.json(
+      { error: `writeTheme must be one of ${VALID_WRITE_THEMES.join(", ")}` },
+      { status: 400 }
+    );
+  }
+  const siteShopDomain =
+    (site as { shop_domain?: string | null }).shop_domain ?? null;
+  if (writeThemeParam !== "env" && !siteShopDomain) {
+    return NextResponse.json(
+      {
+        error:
+          "Staging requires a connected Shopify store. Provision this site first " +
+          "(POST /api/agent/provision with shopDomain, appKey, and appSecret).",
+      },
+      { status: 400 }
+    );
+  }
+  const writeTheme: WriteThemeStrategy =
+    writeThemeParam === "env"
+      ? { mode: "env" }
+      : { mode: "staging", publish: writeThemeParam === "staging_publish" };
 
   // Validate + build the Goal.
   const scope = target?.scope as GoalScope | undefined;
@@ -159,6 +196,7 @@ export async function POST(request: Request) {
         const result = await runGoal(goal, {
           runId,
           dryRun,
+          writeTheme,
           onProgress: (ev: AgentProgressEvent) => send({ ...ev }),
           shouldHalt: () => readControl(runId),
           signal: request.signal,
@@ -178,6 +216,7 @@ export async function POST(request: Request) {
           haltedBy: result.haltedBy ?? null,
           stagedSnippet: result.stagedSnippet,
           apply: result.apply ?? null,
+          staging: result.staging ?? null,
         });
       } catch (e) {
         send({

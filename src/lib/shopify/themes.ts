@@ -31,7 +31,7 @@ import { getShopifyConfig, normalizeShop } from "./config";
 import { shopifyLog } from "./logger";
 import type { ShopContext, ShopifyTheme } from "./types";
 
-export { themePublish } from "./assets";
+export { themePublish, themeDelete } from "./assets";
 
 /** List all themes on the shop (role "main" is the published/live one). */
 export async function themesList(ctx?: ShopContext): Promise<ShopifyTheme[]> {

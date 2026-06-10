@@ -42,7 +42,8 @@ export interface AgentRunRow {
 
 export interface AgentActionRow {
   url: string;
-  action: string; // generate | fix | write | verify | rollback | skip
+  // generate | fix | write | verify | rollback | skip | suppress | merchant_action | publish
+  action: string;
   schema_before: unknown;
   schema_after: unknown;
   gates: GateResults | null;
@@ -105,6 +106,11 @@ export interface MerchantReport {
   pages: ReportPage[];
   /** Empty when there is nothing the merchant must do. */
   requiredMerchantActions: string[];
+  /**
+   * Staging mode (issue #26): set when this run PUBLISHED its verified staging
+   * theme (a `publish` action row). The fixes are live — no publish step remains.
+   */
+  publishedThemeId?: string;
   /** The two proof labels, kept verbatim so the UI can never blur the line. */
   proof: { schemaGenLabel: string; googleLabel: string };
 }
@@ -173,6 +179,46 @@ function expectedTypesFor(run: AgentRunRow, url: string): string[] {
     return pageType ? PAGE_TYPE_MATRIX[pageType].map((r) => r.type) : [];
   }
   return run.goal?.target?.requireTypes ?? [];
+}
+
+/**
+ * Translate one merchant_action audit row (authoritative mode, issues #22/#23/#26)
+ * into the plain-English action the merchant reads. The outcome string is the
+ * structured form the orchestrator/apply recorded:
+ *   external_schema:<type|unparseable>:<url>  — app/ScriptTag-injected block we
+ *                                               cannot remove via theme edits
+ *   not_suppressible:<assetKey>:<reason>      — theme block suppress.ts refused
+ *                                               (fails closed; asset untouched)
+ *   publish_failed:<themeId>:<message>        — verified staging theme exists but
+ *                                               the atomic swap failed
+ */
+function humanizeMerchantAction(outcome: string): string {
+  if (outcome.startsWith("external_schema:")) {
+    const rest = outcome.slice("external_schema:".length);
+    const sep = rest.indexOf(":");
+    const type = sep === -1 ? rest : rest.slice(0, sep);
+    const url = sep === -1 ? "" : rest.slice(sep + 1);
+    const what =
+      type === "unparseable"
+        ? "broken structured data"
+        : `${type} structured data`;
+    return `An app injects ${what}${url ? ` on ${url}` : ""} that SchemaGen cannot remove via theme edits — disable that app's structured-data output to avoid duplicate markup.`;
+  }
+  if (outcome.startsWith("not_suppressible:")) {
+    const rest = outcome.slice("not_suppressible:".length);
+    const sep = rest.indexOf(":");
+    const assetKey = sep === -1 ? rest : rest.slice(0, sep);
+    const reason = sep === -1 ? "" : rest.slice(sep + 1);
+    return `Your theme file ${assetKey} emits competing structured data that SchemaGen could not safely silence${reason ? ` (${reason})` : ""} — it was left untouched; remove that markup manually to avoid duplicates.`;
+  }
+  if (outcome.startsWith("publish_failed:")) {
+    const rest = outcome.slice("publish_failed:".length);
+    const sep = rest.indexOf(":");
+    const themeId = sep === -1 ? rest : rest.slice(0, sep);
+    const message = sep === -1 ? "" : rest.slice(sep + 1);
+    return `The verified theme ${themeId} could not be published automatically${message ? ` (${message})` : ""} — publish it manually in Online Store → Themes; everything on it has already passed verification.`;
+  }
+  return outcome;
 }
 
 function humanizeFailure(outcome: string, gates: GateResults | null): string {
@@ -290,6 +336,15 @@ export function buildMerchantReport(
     a.outcome.startsWith("rollback_failed")
   );
   const rollbackCause = rollbackRows[rollbackRows.length - 1]?.outcome;
+
+  // Authoritative-mode rows (issues #22/#23/#26). suppress rows mean SchemaGen took
+  // ownership of competing theme markup (the dup gate verified exactly one block per
+  // type), merchant_action rows are the things only the merchant can do, and a
+  // publish row means the verified staging theme was swapped live.
+  const suppressRows = ordered.filter((a) => a.action === "suppress");
+  const merchantActionRows = ordered.filter((a) => a.action === "merchant_action");
+  const publishRow = ordered.filter((a) => a.action === "publish").pop() ?? null;
+  const publishedThemeId = publishRow?.write_target ?? undefined;
 
   const byUrl = groupByUrl(ordered);
   const pages: ReportPage[] = [];
@@ -479,6 +534,8 @@ export function buildMerchantReport(
     );
   }
   for (const themeId of publishTargets) {
+    // A published theme needs no publish step — the publish row already covers it.
+    if (themeId === publishedThemeId) continue;
     requiredMerchantActions.push(
       `Publish theme ${themeId} — the verified schema was applied to an unpublished (staged) theme and only reaches shoppers once that theme is published.`
     );
@@ -488,7 +545,20 @@ export function buildMerchantReport(
       `Apply the run live: ${stagedNotApplied} page${stagedNotApplied === 1 ? " has" : "s have"} verified fixes that are previewed only and not yet on your store.`
     );
   }
-  if (fixedOverExistingSchema > 0) {
+  // The merchant_action rows are the precise version of the duplicate warning
+  // (authoritative mode names the exact app/asset), deduped on the structured outcome.
+  const seenMerchantOutcomes = new Set<string>();
+  for (const row of merchantActionRows) {
+    if (seenMerchantOutcomes.has(row.outcome)) continue;
+    seenMerchantOutcomes.add(row.outcome);
+    requiredMerchantActions.push(humanizeMerchantAction(row.outcome));
+  }
+  // The generic duplicate warning only applies when authoritative mode did NOT run:
+  // with suppressions executed (and the dup gate green) the original markup is gone,
+  // and anything left was already named precisely by a merchant_action row above.
+  const authoritativeRan =
+    suppressRows.length > 0 || merchantActionRows.length > 0;
+  if (fixedOverExistingSchema > 0 && !authoritativeRan) {
     requiredMerchantActions.push(
       `Your theme or an app still emits the original structured data on ${fixedOverExistingSchema} page${fixedOverExistingSchema === 1 ? "" : "s"}. SchemaGen adds a corrected copy but cannot remove the app's version — disable that app's schema output to avoid duplicates.`
     );
@@ -511,7 +581,7 @@ export function buildMerchantReport(
     if (counts.alreadyGood > 0) parts.push(`${counts.alreadyGood} already correct`);
     if (counts.fixed > 0) parts.push(`${counts.fixed} fixed`);
     if (counts.generated > 0) parts.push(`${counts.generated} newly generated`);
-    reason = `All ${summary.pagesChecked} page${summary.pagesChecked === 1 ? "" : "s"} checked now carry valid structured data${parts.length ? ` (${parts.join(", ")})` : ""}.`;
+    reason = `All ${summary.pagesChecked} page${summary.pagesChecked === 1 ? "" : "s"} checked now carry valid structured data${parts.length ? ` (${parts.join(", ")})` : ""}.${publishedThemeId ? " The verified theme was published to your live store." : ""}`;
   } else {
     headline = "Needs attention";
     if (run.status === "running") {
@@ -545,6 +615,7 @@ export function buildMerchantReport(
     summary,
     pages,
     requiredMerchantActions,
+    ...(publishedThemeId ? { publishedThemeId } : {}),
     proof: {
       schemaGenLabel: SCHEMAGEN_PROOF_LABEL,
       googleLabel: GOOGLE_PROOF_LABEL,

@@ -12,7 +12,9 @@ export {
   applyEntries,
   makeShopifyOps,
   type ApplyItem,
+  type ApplySuppression,
   type ThemeAssetOps,
+  type VerifyContext,
 } from "./apply";
 export {
   makeBreakers,
@@ -70,4 +72,6 @@ export type {
   AgentProgressEvent,
   RunOptions,
   RunResult,
+  StagingOutcome,
+  WriteThemeStrategy,
 } from "./types";

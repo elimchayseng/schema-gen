@@ -6,6 +6,7 @@ import Link from "next/link";
 // barrel re-exports runGoal/audit → supabase → node:crypto, which a client bundle can't
 // resolve. Types from the barrel are fine (erased at compile time).
 import { groupRunPages, type RunPageGroups } from "@/lib/agent/run-grouping";
+import SchemaTweakPanel from "@/components/agent/SchemaTweakPanel";
 import type {
   AgentProgressEvent,
   ApplyResult,
@@ -13,6 +14,7 @@ import type {
   GateResults,
   GoalScope,
   MinOutcome,
+  StagingOutcome,
 } from "@/lib/agent";
 
 interface DoneSummary {
@@ -26,8 +28,21 @@ interface DoneSummary {
   haltedBy: string | null;
   stagedSnippet: string | null;
   apply: ApplyResult | null;
+  /** Staging-mode outcome (issue #26): preview URL, publish state, rollback theme. */
+  staging?: StagingOutcome | null;
   error?: string;
 }
+
+/**
+ * Client-side write-target modes, mirroring the run route's string enum. Staging
+ * modes duplicate the published theme and need the site provisioned with Shopify
+ * credentials (sites.shop_domain); "env" is the test-theme behavior.
+ */
+const WRITE_MODES: { value: string; label: string; needsShop: boolean }[] = [
+  { value: "env", label: "Test theme (safe default)", needsShop: false },
+  { value: "staging", label: "Staging preview (duplicate of live theme)", needsShop: true },
+  { value: "staging_publish", label: "Staging + auto-publish when verified", needsShop: true },
+];
 
 /** An acted page, as observed on the live stream. */
 interface PageRow {
@@ -222,12 +237,18 @@ export default function AgentRunner({
   crawlId,
   siteId,
   domain,
+  hasShopCredentials = false,
 }: {
   crawlId: string;
   siteId: string;
   domain: string;
+  /** True when the site row carries shop_domain — unlocks the staging write modes. */
+  hasShopCredentials?: boolean;
 }) {
   const [scope, setScope] = useState<GoalScope>("all_products");
+  const [writeMode, setWriteMode] = useState("env");
+  // Staging progress (issue #26): the duplicate's preview URL + the latest stage/publish note.
+  const [stageInfo, setStageInfo] = useState<{ message?: string; previewUrl?: string }>({});
   const [requireTypesInput, setRequireTypesInput] = useState("Product");
   const [minOutcome, setMinOutcome] = useState<MinOutcome>("rich_results_eligible");
   const [urlsInput, setUrlsInput] = useState("");
@@ -273,6 +294,14 @@ export default function AgentRunner({
       runIdRef.current = ev.runId;
     }
     if (ev.phase) setPhase(ev.phase);
+    // Staging events (issue #26): keep the latest message; the previewUrl is sticky once
+    // it arrives so the "see your staged store" link survives later events.
+    if (ev.phase === "stage" || ev.phase === "publish") {
+      setStageInfo((prev) => ({
+        message: ev.message ?? prev.message,
+        previewUrl: ev.previewUrl ?? prev.previewUrl,
+      }));
+    }
     setCounts((prev) => ({
       perceived: ev.perceived ?? prev.perceived,
       queued: ev.queued ?? prev.queued,
@@ -307,6 +336,7 @@ export default function AgentRunner({
       setRunId(null);
       runIdRef.current = null;
       setPhase(null);
+      setStageInfo({});
       setCounts({ perceived: 0, queued: 0, acted: 0, satisfied: 0, unsatisfied: 0 });
 
       const requireTypes = requireTypesInput.split(",").map((s) => s.trim()).filter(Boolean);
@@ -321,7 +351,7 @@ export default function AgentRunner({
         const res = await fetch("/api/agent/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ siteId, dryRun: runDryRun, target }),
+          body: JSON.stringify({ siteId, dryRun: runDryRun, target, writeTheme: writeMode }),
           signal: ac.signal,
         });
         if (!res.ok) {
@@ -358,7 +388,7 @@ export default function AgentRunner({
         setRunning(false);
       }
     },
-    [siteId, scope, requireTypesInput, minOutcome, urlsInput, handleEvent]
+    [siteId, scope, requireTypesInput, minOutcome, urlsInput, writeMode, handleEvent]
   );
 
   const kill = useCallback(async () => {
@@ -543,6 +573,28 @@ export default function AgentRunner({
                 </select>
               </label>
               <label className="block sm:col-span-2">
+                <span className="text-xs font-medium text-text-secondary">Write target (live runs)</span>
+                <select
+                  value={writeMode}
+                  onChange={(e) => setWriteMode(e.target.value)}
+                  disabled={running}
+                  className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 text-sm text-text-primary disabled:opacity-50"
+                >
+                  {WRITE_MODES.map((m) => (
+                    <option key={m.value} value={m.value} disabled={m.needsShop && !hasShopCredentials}>
+                      {m.label}
+                      {m.needsShop && !hasShopCredentials ? " — connect your Shopify store first" : ""}
+                    </option>
+                  ))}
+                </select>
+                {!hasShopCredentials && (
+                  <span className="mt-1 block text-[11px] text-text-muted">
+                    Staging modes duplicate your live theme and need the store connected
+                    (provision with your Shopify app credentials).
+                  </span>
+                )}
+              </label>
+              <label className="block sm:col-span-2">
                 <span className="text-xs font-medium text-text-secondary">Required schema types (comma-separated)</span>
                 <input
                   ref={requireTypesRef}
@@ -588,6 +640,24 @@ export default function AgentRunner({
                 </span>
               )}
             </div>
+            {(phase === "stage" || phase === "publish" || stageInfo.message) && (
+              <div className="mt-3 rounded-md border border-fix/30 bg-fix/10 px-3 py-2 text-xs text-text-secondary">
+                <span className="font-medium text-fix-bright">
+                  {phase === "publish" ? "Publishing" : "Staging"}:
+                </span>{" "}
+                {stageInfo.message ?? "working…"}
+                {stageInfo.previewUrl && (
+                  <a
+                    href={stageInfo.previewUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="ml-2 font-medium text-fix-bright underline hover:no-underline"
+                  >
+                    Preview your staged store ↗
+                  </a>
+                )}
+              </div>
+            )}
             <div className="mt-3 grid grid-cols-3 gap-3 text-center text-xs sm:grid-cols-5">
               {([
                 ["Found", counts.perceived],
@@ -621,6 +691,54 @@ export default function AgentRunner({
           <div className={`mt-4 rounded-lg border p-6 shadow-sm ${TONE_CLASSES[verdict.tone]}`}>
             <h2 className="text-lg font-semibold text-text-primary">{verdict.title}</h2>
             <p className="mt-1 text-sm text-text-secondary">{verdict.detail}</p>
+
+            {/* The merchant-readable report — the "you're good to go" artifact. */}
+            {runId && (
+              <div className="mt-4">
+                <Link
+                  href={`/site/${crawlId}/agent/report/${runId}`}
+                  className="inline-block rounded-md bg-fix px-5 py-2.5 text-sm font-bold text-text-primary transition-all hover:bg-fix-bright"
+                >
+                  View the full report →
+                </Link>
+              </div>
+            )}
+
+            {/* Staging outcome (issue #26) — preview link, publish state, rollback note. */}
+            {summary.staging && (
+              <div className="mt-4 rounded-md border border-fix/30 bg-fix/10 p-4 text-xs text-text-secondary">
+                {summary.staging.published ? (
+                  <>
+                    <span className="font-semibold text-text-primary">
+                      Your verified theme is live.
+                    </span>{" "}
+                    The previous theme (#{summary.staging.rollbackThemeId}) is kept in
+                    Online Store → Themes — republishing it undoes everything instantly.
+                  </>
+                ) : summary.staging.deleted ? (
+                  <>
+                    The staging theme was removed after the run rolled back — your live
+                    store was never touched.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-text-primary">
+                      Your changes are on a staged copy of the live theme.
+                    </span>{" "}
+                    <a
+                      href={summary.staging.previewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-fix-bright underline hover:no-underline"
+                    >
+                      Preview the staged store ↗
+                    </a>{" "}
+                    — publish theme #{summary.staging.stagingThemeId} in Online Store →
+                    Themes when you&apos;re happy.
+                  </>
+                )}
+              </div>
+            )}
 
             {/* The headline next step: apply a clean preview to the live store. */}
             {canApply && (
@@ -720,6 +838,7 @@ export default function AgentRunner({
                   expanded={expanded}
                   detail={detail}
                   onToggle={toggleRow}
+                  siteId={siteId}
                 />
                 <GroupSection
                   title="Not reached"
@@ -742,6 +861,7 @@ export default function AgentRunner({
                   expanded={expanded}
                   detail={detail}
                   onToggle={toggleRow}
+                  siteId={siteId}
                 />
                 <GroupSection
                   title="Already good"
@@ -786,6 +906,7 @@ function GroupSection({
   expanded,
   detail,
   onToggle,
+  siteId,
 }: {
   title: string;
   emoji: string;
@@ -797,6 +918,8 @@ function GroupSection({
   expanded: Set<string>;
   detail: DetailState;
   onToggle: (url: string) => void;
+  /** Enables the per-page "Refine with AI" tweak panel when provided. */
+  siteId?: string;
 }) {
   if (urls.length === 0) return null;
   return (
@@ -817,6 +940,7 @@ function GroupSection({
             isExpanded={expanded.has(url)}
             detail={detail}
             onToggle={onToggle}
+            siteId={siteId}
           />
         ))}
       </div>
@@ -831,6 +955,7 @@ function PageRowItem({
   isExpanded,
   detail,
   onToggle,
+  siteId,
 }: {
   url: string;
   row: PageRow | undefined;
@@ -838,6 +963,7 @@ function PageRowItem({
   isExpanded: boolean;
   detail: DetailState;
   onToggle: (url: string) => void;
+  siteId?: string;
 }) {
   const reason = rowReason(row);
 
@@ -867,21 +993,33 @@ function PageRowItem({
 
       {expandable && isExpanded && (
         <div className="mt-2">
-          <PageDetailView url={url} detail={detail} injected={row?.schemaAfter} />
+          <PageDetailView url={url} detail={detail} injected={row?.schemaAfter} siteId={siteId} />
         </div>
       )}
     </div>
   );
 }
 
+/** Primary @type of a staged JSON-LD value (first object's type) — for the tweak panel. */
+function primarySchemaType(value: unknown): string | null {
+  const first = Array.isArray(value) ? value[0] : value;
+  if (first === null || typeof first !== "object") return null;
+  const t = (first as Record<string, unknown>)["@type"];
+  if (typeof t === "string") return t;
+  if (Array.isArray(t) && typeof t[0] === "string") return t[0];
+  return null;
+}
+
 function PageDetailView({
   url,
   detail,
   injected,
+  siteId,
 }: {
   url: string;
   detail: DetailState;
   injected: unknown;
+  siteId?: string;
 }) {
   // The injected schema comes straight off the live stream, so it renders instantly with
   // no spinner or DB round-trip — this is the "what will be added to this product" view.
@@ -893,6 +1031,8 @@ function PageDetailView({
       ? injected
       : dbDetail?.after;
 
+  const tweakType = primarySchemaType(injectedValue);
+
   return (
     <div className="space-y-2">
       <SchemaBlock label="Structured data to be injected" value={injectedValue} highlight />
@@ -901,6 +1041,23 @@ function PageDetailView({
       )}
       {detail.status === "loading" && before == null && (
         <p className="text-xs text-text-muted">Loading the page&apos;s current schema…</p>
+      )}
+      {/* Optional merchant correction (issue #29) — sticky overrides via chat. Collapsed
+          by default: the default flow needs no merchant input. */}
+      {siteId && tweakType && injectedValue != null && (
+        <details className="rounded-md border border-fix/30">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-fix-bright">
+            Refine with AI — correct anything that&apos;s wrong (optional)
+          </summary>
+          <div className="border-t border-fix/20 p-3">
+            <SchemaTweakPanel
+              siteId={siteId}
+              url={url}
+              schemaType={tweakType}
+              jsonld={injectedValue}
+            />
+          </div>
+        </details>
       )}
     </div>
   );

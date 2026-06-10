@@ -22,7 +22,7 @@ export default async function AgentPage({
 
   const { data: crawl } = await supabase
     .from("crawl_jobs")
-    .select("id, site_id, sites!inner(domain, user_id)")
+    .select("id, site_id, sites!inner(domain, shop_domain, user_id)")
     .eq("id", crawlId)
     .eq("sites.user_id", user.id)
     .single();
@@ -31,13 +31,19 @@ export default async function AgentPage({
 
   const row = crawl as unknown as {
     site_id: string;
-    sites: { domain: string } | { domain: string }[];
+    sites:
+      | { domain: string; shop_domain?: string | null }
+      | { domain: string; shop_domain?: string | null }[];
   };
-  const domain = Array.isArray(row.sites)
-    ? row.sites[0]?.domain ?? ""
-    : row.sites?.domain ?? "";
+  const siteRow = Array.isArray(row.sites) ? row.sites[0] : row.sites;
+  const domain = siteRow?.domain ?? "";
 
   return (
-    <AgentRunner crawlId={crawlId} siteId={row.site_id} domain={domain} />
+    <AgentRunner
+      crawlId={crawlId}
+      siteId={row.site_id}
+      domain={domain}
+      hasShopCredentials={!!siteRow?.shop_domain}
+    />
   );
 }

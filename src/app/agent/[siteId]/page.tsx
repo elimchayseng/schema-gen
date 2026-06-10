@@ -24,10 +24,11 @@ export default async function AgentBySitePage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  // Ownership check: the site must belong to the authenticated user.
+  // Ownership check: the site must belong to the authenticated user. shop_domain
+  // rides along — it unlocks the staging write modes in the runner.
   const { data: site } = await supabase
     .from("sites")
-    .select("id, domain")
+    .select("id, domain, shop_domain")
     .eq("id", siteId)
     .eq("user_id", user.id)
     .single();
@@ -48,6 +49,7 @@ export default async function AgentBySitePage({
       crawlId={latestCrawl?.id ?? siteId}
       siteId={site.id}
       domain={site.domain}
+      hasShopCredentials={!!(site as { shop_domain?: string | null }).shop_domain}
     />
   );
 }

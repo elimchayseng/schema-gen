@@ -13,11 +13,31 @@ import { renderSchemaGenSnippet, urlToTemplateTarget } from "@/lib/shopify/snipp
 import { getShopifyConfig, normalizeShop } from "@/lib/shopify/config";
 import type { SnippetEntry } from "@/lib/shopify/snippet";
 import type { PageResult } from "@/lib/crawl/types";
+import { resolveShopContext } from "@/lib/shopify/credentials";
+import {
+  prepareStagingTheme,
+  themeDelete,
+  themePublish,
+  themesList,
+} from "@/lib/shopify/themes";
+import {
+  locateSchemaSources,
+  makeSourceLocatorOps,
+  type SourceLocatorOps,
+} from "@/lib/shopify/source-locator";
+import type { ShopContext } from "@/lib/shopify/types";
+import type { ExtractedJsonLd } from "@/lib/url-validator/types";
 import { planTasks } from "./planner";
 import { executeTask } from "./executor";
 import { hasCriticalIssue } from "./gates";
 import { l4Verify } from "./verify";
-import { applyEntries, makeShopifyOps, type ApplyItem } from "./apply";
+import {
+  applyEntries,
+  makeShopifyOps,
+  type ApplyItem,
+  type ApplySuppression,
+  type VerifyContext,
+} from "./apply";
 import {
   getStorefrontCookie,
   isStorefrontPasswordConfigured,
@@ -58,7 +78,12 @@ import type {
   PerceivedPage,
   RunOptions,
   RunResult,
+  StagingOutcome,
+  WriteThemeStrategy,
 } from "./types";
+
+/** Per-site Shopify context (issue #25), as resolveShopContext shapes it. */
+type SiteShopContext = ShopContext & { storefrontPassword: string | null };
 
 /** Build a perceived-state record from a no-LLM scan of one page. */
 function toPerceived(goal: Goal, url: string, scan: PageResult): PerceivedPage {
@@ -94,6 +119,9 @@ function toPerceived(goal: Goal, url: string, scan: PageResult): PerceivedPage {
     hadSchema,
     satisfied: scan.status === "valid" && typesOk && richOk,
     requirements,
+    // Carried for authoritative mode (issue #23): the source locator classifies the
+    // origin of each live block without re-fetching the page.
+    renderedBlocks: scan.renderedBlocks ?? null,
   };
 }
 
@@ -151,11 +179,17 @@ async function getSiteRow(
  * Admin-API catalog fallback enumerates products + collections — gated on the site's
  * Shopify credentials actually resolving (enumerateCatalogUrls degrades to []).
  */
-async function resolveTargetUrls(goal: Goal): Promise<string[]> {
+async function resolveTargetUrls(
+  goal: Goal,
+  preloadedSite: { domain: string; shopDomain: string | null } | null = null
+): Promise<string[]> {
   if (goal.target.scope === "url_list") {
     return goal.target.urls ?? [];
   }
-  const site = await getSiteRow(goal.siteId);
+  // The orchestrator preloads the site row for the per-site context (issue #25);
+  // when its best-effort lookup failed, retry here so the pre-#25 error behavior
+  // ("Could not resolve site domain…") for site-scoped goals is preserved.
+  const site = preloadedSite ?? (await getSiteRow(goal.siteId));
   const { urls } = await fetchSitemap(site.domain);
   let candidates = urls.map((u) => u.loc);
 
@@ -219,18 +253,38 @@ function resolveWriteThemeId(): number {
  * via Shopify's `?preview_theme_id=` param, so verification reads the exact bytes the
  * write produced, not the currently-published theme.
  */
-function makeLiveVerify(target: GoalTarget, themeId: number, shop: string) {
+function makeLiveVerify(
+  target: GoalTarget,
+  themeId: number,
+  shop: string,
+  /**
+   * Per-site storefront password (issue #25). `undefined` keeps the env behavior
+   * (SHOPIFY_STOREFRONT_PASSWORD); a string authenticates with THAT password; null
+   * means "per-site context with no password" — never fall back to the env one,
+   * storefront passwords are store-specific.
+   */
+  storefrontPassword?: string | null
+) {
+  const perSite = storefrontPassword !== undefined;
   // Dev stores (and any store with the storefront password on) redirect every
   // unauthenticated request to /password, so L4 would never see the rendered schema.
-  // Obtain the storefront_digest cookie once (when SHOPIFY_STOREFRONT_PASSWORD is set)
+  // Obtain the storefront_digest cookie once (when a password is configured)
   // and send it on every verify fetch so the real page renders.
   let cookiePromise: Promise<string | null> | null = null;
   const getCookie = () => {
-    if (!cookiePromise) cookiePromise = getStorefrontCookie(shop);
+    if (!cookiePromise) {
+      cookiePromise = perSite
+        ? storefrontPassword
+          ? getStorefrontCookie(shop, storefrontPassword)
+          : Promise.resolve(null)
+        : getStorefrontCookie(shop);
+    }
     return cookiePromise;
   };
+  const passwordConfigured = () =>
+    perSite ? storefrontPassword != null : isStorefrontPasswordConfigured();
 
-  return (url: string, _entry: SnippetEntry) => {
+  return (url: string, _entry: SnippetEntry, ctx?: VerifyContext) => {
     void _entry;
     const previewUrl = `${url}${url.includes("?") ? "&" : "?"}preview_theme_id=${themeId}`;
     // Per-page requirements (issue #28): L4 must demand exactly what L1/L2 demanded
@@ -241,6 +295,9 @@ function makeLiveVerify(target: GoalTarget, themeId: number, shop: string) {
       requireTypes: requirements.map((r) => r.type),
       minOutcome: target.minOutcome,
       requirements,
+      // Duplicate-prevention gate (issue #24): on whenever the apply carries
+      // suppressions — apply.ts sets ctx.unique, we just forward it.
+      unique: ctx?.unique ?? false,
       fetchHtml: async (u) => {
         const cookie = await getCookie();
         const r = await fetchPage(u, cookie ? { headers: { Cookie: cookie } } : {});
@@ -249,8 +306,10 @@ function makeLiveVerify(target: GoalTarget, themeId: number, shop: string) {
         // the storefront is password-gated and we couldn't authenticate past it.
         if (looksPasswordGated(r.finalUrl, r.html)) {
           throw new Error(
-            isStorefrontPasswordConfigured()
-              ? "storefront is password-protected and the configured SHOPIFY_STOREFRONT_PASSWORD was rejected"
+            passwordConfigured()
+              ? perSite
+                ? "storefront is password-protected and the site's configured storefront password was rejected"
+                : "storefront is password-protected and the configured SHOPIFY_STOREFRONT_PASSWORD was rejected"
               : "storefront is password-protected — set SHOPIFY_STOREFRONT_PASSWORD (Online Store → Preferences) or disable the storefront password so the live page can be verified"
           );
         }
@@ -258,6 +317,196 @@ function makeLiveVerify(target: GoalTarget, themeId: number, shop: string) {
       },
     });
   };
+}
+
+/**
+ * Name for the staging duplicate (issue #26). Date-stamped (day granularity) so a
+ * merchant browsing Online Store → Themes can tell runs apart; tests assert the
+ * stable prefix only, so the date never makes a test flaky.
+ */
+function stagingThemeName(): string {
+  return `SchemaGen Staging ${new Date().toISOString().slice(0, 10)}`;
+}
+
+/**
+ * Theme to classify block origins against for a DRY-RUN authoritative analysis
+ * (no write target exists yet). The published theme is the right reference — it is
+ * exactly what staging mode would duplicate — with the env test theme as fallback.
+ * null = no theme resolvable; the analysis is skipped (best-effort early warning).
+ */
+async function resolveAnalysisThemeId(
+  ctx: SiteShopContext | null
+): Promise<number | null> {
+  try {
+    const themes = await themesList(ctx ?? undefined);
+    const main = themes.find((t) => t.role === "main");
+    if (main) return main.id;
+  } catch (e) {
+    warn("themesList failed for dry-run authoritative analysis", e);
+  }
+  try {
+    return resolveWriteThemeId();
+  } catch {
+    return null;
+  }
+}
+
+/** All @type values declared by a parsed JSON-LD block (walks arrays + @graph). */
+function blockSchemaTypes(parsed: unknown): string[] {
+  const types = new Set<string>();
+  const visit = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      v.forEach(visit);
+      return;
+    }
+    if (v === null || typeof v !== "object") return;
+    const obj = v as Record<string, unknown>;
+    const t = obj["@type"];
+    if (typeof t === "string") types.add(t);
+    else if (Array.isArray(t)) {
+      for (const x of t) if (typeof x === "string") types.add(x);
+    }
+    if (Array.isArray(obj["@graph"])) visit(obj["@graph"]);
+  };
+  visit(parsed);
+  return [...types];
+}
+
+const QUOTED_LITERAL_RE = /"(?:[^"\\\n]|\\.)*"/g;
+
+/**
+ * Pick the `contains` needle a suppression will use to find the emitting script
+ * element inside the theme asset (suppress.ts matches script-range text).
+ *
+ * THE CHOICE: quoted string literals are what survive Liquid templating, so the
+ * needle is the LONGEST quoted literal of the rendered block (quotes included —
+ * `"https://schema.org/InStock"` style) that ALSO appears verbatim in the asset's
+ * text; a long shared literal is near-conclusive and stable across re-renders.
+ * When the asset text is unavailable, fall back to the longest literal outright —
+ * if it turns out not to match, suppressJsonLdEmission fails closed and apply.ts
+ * records a not_suppressible merchant_action instead of touching the asset.
+ * Ties break on first occurrence (Array.prototype.sort is stable). Returns
+ * undefined only when the block has no usable quoted literal at all.
+ */
+function pickContainsLiteral(
+  raw: string,
+  assetText: string | null
+): string | undefined {
+  const literals = [...new Set(raw.match(QUOTED_LITERAL_RE) ?? [])].filter(
+    (l) => l.length >= 4 // at least 2 inner chars — single chars prove nothing
+  );
+  literals.sort((a, b) => b.length - a.length);
+  if (assetText) {
+    const inAsset = literals.find((l) => assetText.includes(l));
+    if (inAsset) return inAsset;
+  }
+  return literals[0];
+}
+
+/**
+ * Authoritative suppression plan (issue #23). For every page that staged an entry,
+ * classify the origin of each live JSON-LD block (source locator; one theme scan
+ * total thanks to its per-ops cache) and decide:
+ *
+ *   schemagen           → ours; never suppress.
+ *   theme:<asset_key>   → COMPETES (declared type intersects the page's required
+ *                         types, or the block is unparseable garbage) → suppression
+ *                         {assetKey, match:{contains}, url}. Parsed-but-invalid
+ *                         blocks of a NON-required type are left alone — they can't
+ *                         trip the duplicate-prevention gate.
+ *   external / unknown  → not removable via theme edits → merchant_action row
+ *                         `external_schema:<type|unparseable>:<url>` (deduped).
+ *
+ * Suppressions are deduped by assetKey+needle. The plan only PLANS — apply.ts
+ * executes it inside the backup → write → verify → rollback envelope.
+ */
+async function buildSuppressionPlan(args: {
+  themeId: number;
+  pages: { url: string; blocks: ExtractedJsonLd[] }[];
+  target: GoalTarget;
+  ops: SourceLocatorOps;
+}): Promise<{ suppressions: ApplySuppression[]; merchantRows: ActionRecord[] }> {
+  const suppressions: ApplySuppression[] = [];
+  const merchantRows: ActionRecord[] = [];
+  const seenSuppression = new Set<string>();
+  const seenMerchant = new Set<string>();
+  const assetTextCache = new Map<string, string | null>();
+  const getAssetText = async (key: string): Promise<string | null> => {
+    if (!assetTextCache.has(key)) {
+      try {
+        assetTextCache.set(
+          key,
+          (await args.ops.assetGet(args.themeId, key)).value ?? null
+        );
+      } catch (e) {
+        warn(`could not fetch ${key} for suppression-needle selection`, e);
+        assetTextCache.set(key, null);
+      }
+    }
+    return assetTextCache.get(key) ?? null;
+  };
+  const merchantRow = (url: string, outcome: string): void => {
+    if (seenMerchant.has(outcome)) return;
+    seenMerchant.add(outcome);
+    merchantRows.push({
+      url,
+      action: "merchant_action",
+      schemaBefore: null,
+      schemaAfter: null,
+      gates: null,
+      outcome,
+    });
+  };
+
+  for (const page of args.pages) {
+    const requiredTypes = new Set(
+      requirementsForTarget(args.target, page.url).map((r) => r.type)
+    );
+    const located = await locateSchemaSources({
+      themeId: args.themeId,
+      renderedBlocks: page.blocks,
+      ops: args.ops,
+    });
+    for (let i = 0; i < page.blocks.length; i++) {
+      const block = page.blocks[i];
+      const res = located[i];
+      if (!res || res.source === "schemagen") continue;
+      const unparseable = !!block.parseError || block.parsed == null;
+      const types = unparseable ? [] : blockSchemaTypes(block.parsed);
+
+      if (res.source.startsWith("theme:") && res.assetKey) {
+        const competes =
+          unparseable || types.some((t) => requiredTypes.has(t));
+        if (!competes) continue;
+        const needle = pickContainsLiteral(
+          block.raw,
+          await getAssetText(res.assetKey)
+        );
+        if (!needle) {
+          merchantRow(
+            page.url,
+            `not_suppressible:${res.assetKey}:no stable literal in the rendered block`
+          );
+          continue;
+        }
+        const dedupe = `${res.assetKey} ${needle}`;
+        if (seenSuppression.has(dedupe)) continue;
+        seenSuppression.add(dedupe);
+        suppressions.push({
+          assetKey: res.assetKey,
+          match: { contains: needle },
+          url: page.url,
+        });
+        continue;
+      }
+
+      // external (app/ScriptTag) or unknown (ambiguous evidence): never acted on,
+      // surfaced as a required merchant action — once per distinct block.
+      const label = unparseable ? "unparseable" : (types[0] ?? "unknown");
+      merchantRow(page.url, `external_schema:${label}:${page.url}`);
+    }
+  }
+  return { suppressions, merchantRows };
 }
 
 export async function runGoal(
@@ -269,6 +518,12 @@ export async function runGoal(
   const concurrency = clampConcurrency(opts.concurrency);
   const resume = opts.resume ?? true;
   const judge = opts.judge ?? false;
+  // Live-apply write strategy (issue #26). Default "env" = pre-staging behavior.
+  const writeTheme: WriteThemeStrategy = opts.writeTheme ?? { mode: "env" };
+  // Authoritative override (issue #23): defaults ON for whole-site goals only, so
+  // every non-site goal keeps its pre-#23 behavior unless explicitly opted in.
+  const authoritative =
+    goal.constraints.authoritative ?? goal.target.scope === "site";
   const breakers = makeBreakers({
     maxCostUsd: goal.constraints.maxCostUsd,
     ...opts.breakers,
@@ -324,8 +579,31 @@ export async function runGoal(
   };
 
   try {
+    // PER-SITE SHOPIFY CONTEXT (issue #25): when the site row names a shop_domain,
+    // resolve its credentials ONCE and thread the resulting ShopContext through every
+    // Shopify surface this run touches (asset ops, staging/publish, source locator,
+    // storefront cookie). Best-effort: a missing site row or unresolvable credentials
+    // degrade to the env-configured single-store behavior, byte-identical to pre-#25.
+    let siteRow: { domain: string; shopDomain: string | null } | null = null;
+    try {
+      siteRow = await getSiteRow(goal.siteId);
+    } catch (e) {
+      warn("site lookup failed; per-site Shopify context unavailable", e);
+    }
+    let shopCtx: SiteShopContext | null = null;
+    if (siteRow?.shopDomain) {
+      try {
+        shopCtx = await resolveShopContext(siteRow.shopDomain);
+      } catch (e) {
+        warn(
+          `could not resolve Shopify credentials for ${siteRow.shopDomain}; using env`,
+          e
+        );
+      }
+    }
+
     // PERCEIVE — no LLM. A kill between batches stops here; nothing has been written.
-    let urls = await resolveTargetUrls(goal);
+    let urls = await resolveTargetUrls(goal, siteRow);
 
     // Persist the resolved target list (issue #27) so the merchant report can compute
     // notReached exactly for any scope. Best-effort, like every other audit write.
@@ -370,8 +648,17 @@ export async function runGoal(
     let shopHost = "";
     let storefrontCookie: string | null = null;
     try {
-      shopHost = normalizeShop(getShopifyConfig().shop);
-      storefrontCookie = await getStorefrontCookie(getShopifyConfig().shop);
+      if (shopCtx) {
+        // Per-site context (issue #25): use the site's own storefront password —
+        // never the env one, storefront passwords are store-specific.
+        shopHost = normalizeShop(shopCtx.shop);
+        storefrontCookie = shopCtx.storefrontPassword
+          ? await getStorefrontCookie(shopCtx.shop, shopCtx.storefrontPassword)
+          : null;
+      } else {
+        shopHost = normalizeShop(getShopifyConfig().shop);
+        storefrontCookie = await getStorefrontCookie(getShopifyConfig().shop);
+      }
     } catch {
       shopHost = "";
       storefrontCookie = null;
@@ -497,6 +784,18 @@ export async function runGoal(
       ? renderSchemaGenSnippet(entries)
       : null;
 
+    // AUTHORITATIVE PLAN INPUT (issue #23): the staged pages whose live render carried
+    // JSON-LD blocks the locator can classify. Empty when authoritative is off, when
+    // nothing staged, or when no scan captured blocks — all of those skip the locator
+    // entirely (no theme scan, no Admin API traffic).
+    const perceivedByUrl = new Map(perceived.map((p) => [p.url, p]));
+    const planPages = authoritative
+      ? applyItems.flatMap((i) => {
+          const blocks = perceivedByUrl.get(i.url)?.renderedBlocks;
+          return blocks && blocks.length > 0 ? [{ url: i.url, blocks }] : [];
+        })
+      : [];
+
     // PRE-APPLY KILL CHECKPOINT (the load-bearing guarantee). The apply path is atomic
     // and is never interrupted once entered, so the ONLY safe place to honor a kill is
     // right here, before the first write. A kill caught here means nothing was written
@@ -509,24 +808,147 @@ export async function runGoal(
     // LIVE APPLY (Phase 3) — only when not dry-run, nothing halted us, not killed, and we
     // have verified-stageable entries. Dry-run returns here with apply:null, unchanged.
     let apply: ApplyResult | null = null;
+    let staging: StagingOutcome | null = null;
     if (!dryRun && !haltedBy && !killed && applyItems.length > 0) {
+      // STAGE (issue #26): duplicate the published theme and make it the write target.
+      // SLOW — O(assets) Asset API calls — so progress goes out BEFORE the call, and
+      // the preview URL goes out the moment the duplicate exists.
+      if (writeTheme.mode === "staging") {
+        emit({
+          phase: "stage",
+          runId,
+          message: "duplicating the live theme — this can take a few minutes…",
+        });
+        const prepared = await prepareStagingTheme(
+          undefined,
+          stagingThemeName(),
+          shopCtx ?? undefined
+        );
+        staging = { ...prepared, published: false };
+        emit({
+          phase: "stage",
+          runId,
+          previewUrl: prepared.previewUrl,
+          message: `staging theme ${prepared.stagingThemeId} ready`,
+        });
+      }
       emit({ phase: "apply", queued: applyItems.length });
-      const themeId = resolveWriteThemeId();
-      const { shop } = getShopifyConfig();
+      // Staging mode writes to the fresh duplicate; env mode keeps the pre-#26 path
+      // (including resolveWriteThemeId's hard error on a bad env id) byte-identical.
+      const themeId = staging
+        ? staging.stagingThemeId
+        : resolveWriteThemeId();
+      const shop = shopCtx?.shop ?? getShopifyConfig().shop;
+
+      // AUTHORITATIVE SUPPRESSION PLAN (issue #23) — computed against the WRITE-TARGET
+      // theme: the staging duplicate's assets are byte-identical to live (that's the
+      // point), and in env mode the env theme IS what the suppressions must edit.
+      // A plan failure here throws BEFORE the first write — fatal but safe.
+      let suppressions: ApplySuppression[] = [];
+      if (planPages.length > 0) {
+        const plan = await buildSuppressionPlan({
+          themeId,
+          pages: planPages,
+          target: goal.target,
+          ops: makeSourceLocatorOps(shopCtx ?? undefined),
+        });
+        suppressions = plan.suppressions;
+        for (const row of plan.merchantRows) await record(row);
+      }
+
       apply = await applyEntries({
         runId,
         themeId,
         shop,
         items: applyItems,
-        ops: makeShopifyOps(),
-        verify: makeLiveVerify(goal.target, themeId, shop),
+        ops: makeShopifyOps(shopCtx ?? undefined),
+        verify: makeLiveVerify(
+          goal.target,
+          themeId,
+          shop,
+          shopCtx ? shopCtx.storefrontPassword : undefined
+        ),
         persistBackup: (assetKey, valueBefore) =>
           backupRow(runId, shop, themeId, assetKey, valueBefore),
+        ...(suppressions.length > 0 ? { suppressions } : {}),
       });
       for (const a of apply.actions) await record(a);
       // A rollback that itself failed pages the user — never thrash on the next run.
       if (apply.status === "paged") recordRollbackFailure(breakers);
       emit({ phase: "apply", applyStatus: apply.status });
+
+      // PUBLISH / CLEANUP (issue #26).
+      if (staging) {
+        if (
+          apply.status === "applied" &&
+          writeTheme.mode === "staging" &&
+          writeTheme.publish
+        ) {
+          emit({
+            phase: "publish",
+            runId,
+            message: `publishing staging theme ${staging.stagingThemeId}`,
+          });
+          try {
+            await themePublish(staging.stagingThemeId, shopCtx ?? undefined);
+            staging.published = true;
+            staging.rollbackThemeId = staging.sourceThemeId;
+            await record({
+              url: applyItems[0]?.url ?? "",
+              action: "publish",
+              schemaBefore: null,
+              schemaAfter: null,
+              gates: null,
+              outcome: `published:${staging.stagingThemeId} displaced:${staging.sourceThemeId}`,
+              writeTarget: String(staging.stagingThemeId),
+            });
+          } catch (e) {
+            // The verified staging theme is intact — the merchant can publish it
+            // manually, so a failed swap degrades to a merchant action, not a throw.
+            warn("themePublish failed; staging theme left unpublished", e);
+            await record({
+              url: applyItems[0]?.url ?? "",
+              action: "merchant_action",
+              schemaBefore: null,
+              schemaAfter: null,
+              gates: null,
+              outcome: `publish_failed:${staging.stagingThemeId}:${e instanceof Error ? e.message : String(e)}`,
+              writeTarget: String(staging.stagingThemeId),
+            });
+          }
+        } else if (apply.status === "rolled_back") {
+          // The rollback restored the duplicate byte-identical, so it holds no
+          // evidence — delete it (best-effort) so failed runs don't pile up themes.
+          try {
+            await themeDelete(staging.stagingThemeId, shopCtx ?? undefined);
+            staging.deleted = true;
+          } catch (e) {
+            warn(`failed to delete staging theme ${staging.stagingThemeId}`, e);
+          }
+        }
+        // status "paged": the rollback FAILED — the staging theme is the only record
+        // of what was written (the forensic evidence a human needs to finish the
+        // restore by hand). NEVER delete it on a paged run.
+      }
+    } else if (dryRun && !haltedBy && !killed && planPages.length > 0) {
+      // AUTHORITATIVE, DRY-RUN (issue #23): no theme is written, but block origins are
+      // still classified so app-injected/external schema surfaces in the report EARLY
+      // (the merchant can act before the live run). No suppression executes. Strictly
+      // best-effort: any failure degrades to "no early warning", never a failed run.
+      try {
+        const analysisThemeId = await resolveAnalysisThemeId(shopCtx);
+        if (analysisThemeId != null) {
+          const plan = await buildSuppressionPlan({
+            themeId: analysisThemeId,
+            pages: planPages,
+            target: goal.target,
+            ops: makeSourceLocatorOps(shopCtx ?? undefined),
+          });
+          for (const row of plan.merchantRows) await record(row);
+        }
+      } catch (e) {
+        warn("dry-run authoritative analysis failed (continuing)", e);
+      }
     }
 
     // Map the run outcome. The persisted agent_runs.status is constrained to
@@ -584,6 +1006,7 @@ export async function runGoal(
       apply,
       haltedBy,
       killed,
+      staging,
       actions,
     };
   } catch (err) {

@@ -3,6 +3,7 @@
  * artifacts the planner/executor/audit pass around.
  */
 import type { PageStatus } from "@/lib/crawl/types";
+import type { ExtractedJsonLd } from "@/lib/url-validator/types";
 
 export type GoalScope = "site" | "all_products" | "all_pages" | "url_list";
 export type MinOutcome = "valid" | "rich_results_eligible";
@@ -119,6 +120,14 @@ export interface PerceivedPage {
    * keeps every pre-matrix caller and fixture working unchanged.
    */
   requirements?: TypeRequirement[];
+  /**
+   * The raw JSON-LD blocks of the live render, exactly as the perceive scan's
+   * extractor saw them (raw text + parse result + position). Carried so
+   * authoritative mode (issue #23) can classify each block's ORIGIN via the
+   * schema source locator without re-fetching the page. Absent on fetch
+   * failures and for pre-#23 fixtures.
+   */
+  renderedBlocks?: ExtractedJsonLd[] | null;
 }
 
 export interface PlannedTask {
