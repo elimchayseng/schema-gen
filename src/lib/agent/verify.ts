@@ -45,14 +45,33 @@ export interface L4VerifyInput {
   maxAttempts?: number;
   /** Injectable delay between attempts (ms-agnostic; tests pass a no-op). */
   sleep?: (attempt: number) => Promise<void>;
+  /**
+   * Duplicate-prevention gate (issue #24), on for authoritative applies. The rendered
+   * page must carry EXACTLY ONE valid block per required type and ZERO remaining
+   * invalid/unparseable blocks of a required type — i.e. the suppressed theme block is
+   * really gone and only SchemaGen's block answers for that type. The verdict is folded
+   * into the same L4 GateResult (detail names the duplicate), so a dup failure takes
+   * the exact rollback path an L4 failure does and GateResults/UI stay unchanged.
+   */
+  unique?: boolean;
+}
+
+/**
+ * Does this UNPARSEABLE block plausibly declare a given @type? Parsing failed, so the
+ * only evidence is the raw text — match the `"@type": "X"` literal (whitespace-tolerant).
+ */
+function rawDeclaresType(raw: string, type: string): boolean {
+  return new RegExp(`"@type"\\s*:\\s*"${type.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`).test(raw);
 }
 
 /** Evaluate one fetched HTML payload against the per-type requirements. Pure. */
 function verifyHtml(
   html: string,
-  requirements: TypeRequirement[]
+  requirements: TypeRequirement[],
+  unique = false
 ): GateResult {
   const extracted = extractJsonLd(html);
+  const unparseable = extracted.filter((e) => e.parseError || e.parsed === null);
   const live = extracted
     .filter((e) => !e.parseError && e.parsed !== null)
     .map((e) => e.parsed as Record<string, unknown>);
@@ -72,6 +91,33 @@ function verifyHtml(
   );
   if (missing) {
     return fail(`no valid '${missing.type}' schema in the live render`);
+  }
+
+  // Duplicate-prevention gate (issue #24): with the competing emissions suppressed,
+  // each required type must be answered by EXACTLY ONE valid block, and no
+  // invalid/unparseable block of a required type may still render (a suppressed
+  // theme block that still shows up means the suppression didn't take → rollback).
+  if (unique) {
+    for (const r of requirements) {
+      const validCount = live.filter(
+        (_, i) => validations[i].valid && schemaTypesOf(live[i]).includes(r.type)
+      ).length;
+      if (validCount !== 1) {
+        return fail(
+          `duplicate schema: ${validCount} valid '${r.type}' blocks in the live render (expected exactly 1)`
+        );
+      }
+      const invalidCount =
+        live.filter(
+          (_, i) => !validations[i].valid && schemaTypesOf(live[i]).includes(r.type)
+        ).length +
+        unparseable.filter((e) => rawDeclaresType(e.raw, r.type)).length;
+      if (invalidCount > 0) {
+        return fail(
+          `an invalid or unparseable '${r.type}' block still renders on the live page (${invalidCount} found)`
+        );
+      }
+    }
   }
 
   // Rich-results parity with L2: each rich-bar type must be eligible AND its

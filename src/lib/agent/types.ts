@@ -39,6 +39,17 @@ export interface GoalConstraints {
   maxCostUsd?: number;
   /** Gate novel type changes if false — reserved for Phase 3. */
   allowSchemaTypeChange: boolean;
+  /**
+   * Authoritative override mode (issue #23). When on, a live apply also SUPPRESSES
+   * competing theme JSON-LD emissions (any theme asset that emits a type SchemaGen
+   * manages on that page type, or an invalid/unparseable block) on the write-target
+   * theme, and the post-write verify demands EXACTLY ONE valid block per required
+   * type (the duplicate-prevention gate, issue #24). Blocks injected by apps
+   * (external) cannot be removed via theme edits and become requiredMerchantActions.
+   * Defaults to true for scope "site", false otherwise — so the pre-integration
+   * behavior of every non-site goal is unchanged.
+   */
+  authoritative?: boolean;
 }
 
 export interface Goal {
@@ -127,7 +138,13 @@ export type ActionKind =
   | "write"
   | "verify"
   | "rollback"
-  | "skip";
+  | "skip"
+  /** Authoritative mode (issue #23): a competing theme emission was reversibly silenced. */
+  | "suppress"
+  /** Structured "the merchant must do X" record (e.g. app-injected schema we can't remove). */
+  | "merchant_action"
+  /** Staging mode (issue #26): the staging theme was published (atomic swap). */
+  | "publish";
 
 export interface ActionRecord {
   url: string;
@@ -180,16 +197,34 @@ export interface ApplyResult {
   writeTarget: string | null;
   /** Per-entry L4 verdicts, in entry order. */
   l4: (GateResult | null)[];
-  /** Audit rows produced by the apply (write / verify / rollback). */
+  /** Audit rows produced by the apply (write / verify / suppress / rollback). */
   actions: ActionRecord[];
   /** Set when status="paged": the theme was left dirty (rollback failed). */
   error?: string;
+  /**
+   * Theme asset keys whose competing JSON-LD emissions were suppressed as part of
+   * this apply's managed footprint (issue #23). Suppressed assets are backed up and
+   * restored byte-identical by the same rollback that covers theme.liquid/snippet.
+   * Absent/empty when nothing was suppressed (non-authoritative runs).
+   */
+  suppressedAssets?: string[];
 }
 
 // ---- Streaming + cancellation (plan §9, Phase 4) ----
 
-/** Coarse phase of the loop, for progress events. */
-export type AgentPhase = "perceive" | "plan" | "act" | "apply" | "done";
+/**
+ * Coarse phase of the loop, for progress events. "stage" (preparing the staging
+ * theme duplicate — slow, O(assets) Asset API calls) and "publish" (atomic swap of
+ * the verified staging theme to live) only occur under writeTheme mode "staging".
+ */
+export type AgentPhase =
+  | "perceive"
+  | "plan"
+  | "act"
+  | "stage"
+  | "apply"
+  | "publish"
+  | "done";
 
 /**
  * Cross-request control signal (agent_runs.control). "run" = continue.
@@ -232,11 +267,53 @@ export interface AgentProgressEvent {
   unsatisfied?: number;
   /** Present on phase "apply" / "done" once the live apply has run. */
   applyStatus?: ApplyStatus;
-  /** Human-readable note, e.g. a breaker reason or "killed". */
+  /**
+   * Merchant-reviewable preview URL of the staging theme
+   * (`https://<shop>/?preview_theme_id=<id>`). Carried on "stage" events once the
+   * duplicate is ready, so the UI can link it before the apply even finishes.
+   */
+  previewUrl?: string;
+  /** Human-readable note, e.g. a breaker reason, "killed", or a staging/publish status. */
   message?: string;
 }
 
 // ---- Run ----
+
+/**
+ * Where a live (dryRun:false) apply writes (issues #25/#26).
+ *
+ *   { mode: "env" }      — today's behavior, the default: write to the env-configured
+ *                          SHOPIFY_TEST_THEME_ID. Byte-identical to the pre-staging path.
+ *   { mode: "staging" }  — duplicate the PUBLISHED theme (prepareStagingTheme — slow,
+ *                          O(assets) Asset API calls), write the managed footprint +
+ *                          suppressions to the duplicate, L4-verify via its
+ *                          preview_theme_id, and, when `publish` is true AND every gate
+ *                          is green, themePublish() it (atomic swap). The previously
+ *                          published theme is kept as the rollback artifact. On ANY gate
+ *                          failure nothing is published — the live store was never
+ *                          touched — and the duplicate is deleted best-effort.
+ */
+export type WriteThemeStrategy =
+  | { mode: "env" }
+  | { mode: "staging"; publish: boolean };
+
+/** What the staging flow produced (RunResult.staging; null/absent outside staging mode). */
+export interface StagingOutcome {
+  stagingThemeId: number;
+  /** Merchant-reviewable URL (live storefront rendered with the staging theme). */
+  previewUrl: string;
+  /** The theme that was duplicated (the published theme). */
+  sourceThemeId: number;
+  /** True once themePublish() swapped the staging theme live. */
+  published: boolean;
+  /**
+   * Set when published: the previously-published theme id — the rollback artifact.
+   * Re-publishing this theme undoes the swap entirely.
+   */
+  rollbackThemeId?: number;
+  /** True when a failed run deleted the staging duplicate (best-effort cleanup). */
+  deleted?: boolean;
+}
 
 export interface RunOptions {
   /**
@@ -284,6 +361,11 @@ export interface RunOptions {
    * Off keeps the path inert (no extra LLM calls), so unit tests stay deterministic.
    */
   judge?: boolean;
+  /**
+   * Live-apply write target strategy (issues #25/#26). Default { mode: "env" } —
+   * the pre-staging SHOPIFY_TEST_THEME_ID behavior. See WriteThemeStrategy.
+   */
+  writeTheme?: WriteThemeStrategy;
 }
 
 export interface RunResult {
@@ -315,5 +397,7 @@ export interface RunResult {
    * show "Killed" distinctly. When killed before the apply, no theme write happened.
    */
   killed?: boolean;
+  /** Staging-mode outcome (issue #26). null/absent under writeTheme mode "env". */
+  staging?: StagingOutcome | null;
   actions: ActionRecord[];
 }

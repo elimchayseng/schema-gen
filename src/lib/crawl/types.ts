@@ -1,4 +1,5 @@
 import type { ValidationResult } from "@/lib/validation/types";
+import type { ExtractedJsonLd } from "@/lib/url-validator/types";
 
 // --- Sitemap types ---
 
@@ -45,6 +46,14 @@ export interface PageResult {
     schemas: ProcessedSchema[];
   } | null;
   errorReason?: string;
+  /**
+   * The raw JSON-LD blocks extracted from the rendered page, exactly as the
+   * extractor saw them (raw text + parse result + position). Carried so the
+   * agent's authoritative mode (issue #23) can classify each block's ORIGIN
+   * via the schema source locator without re-fetching the page. Absent on
+   * fetch failures and for pre-existing callers that never read it.
+   */
+  renderedBlocks?: ExtractedJsonLd[] | null;
 }
 
 // --- Crawl job types ---

@@ -159,12 +159,16 @@ export async function processPage(
           schemas: unparseable.map(unparseableSchemaEntry),
         },
         errorReason: `${unparseable.length} JSON-LD block(s) on the page are invalid JSON and could not be parsed`,
+        renderedBlocks: extracted,
       };
     }
 
     if (mode === "optimize") {
       // AI generate schemas for this page
-      return await generateForPage(url, finalUrl, html, onProgress, opts.requiredTypes);
+      return {
+        ...(await generateForPage(url, finalUrl, html, onProgress, opts.requiredTypes)),
+        renderedBlocks: extracted,
+      };
     }
     return {
       url,
@@ -172,6 +176,7 @@ export async function processPage(
       originalSchemas: null,
       fixedSchemas: null,
       validationResults: null,
+      renderedBlocks: extracted,
     };
   }
 
@@ -285,6 +290,7 @@ export async function processPage(
       warningCount: totalWarnings,
       schemas: processedSchemas,
     },
+    renderedBlocks: extracted,
   };
 }
 

@@ -9,6 +9,8 @@ import { urlToTemplateTarget, type SnippetEntry } from "@/lib/shopify/snippet";
 import { gatesPassed } from "./types";
 import { l6Judge } from "./judge";
 import { repairToGoal, type RefineFn } from "./repair";
+import { runGates } from "./gates";
+import { applyOverrides, loadOverrides } from "./overrides";
 import { uniformRequirements } from "./page-type-matrix";
 import type { ActionRecord, Goal, PlannedTask, TypeRequirement } from "./types";
 
@@ -76,8 +78,38 @@ export async function executeTask(
       ? (n, d) => opts.onRepairAttempt!(task.url, n, d)
       : undefined,
   });
-  const candidates = repair.candidates;
-  const gates = repair.gates;
+  let candidates = repair.candidates;
+  let gates = repair.gates;
+
+  // Sticky merchant overrides (issue #29): a merchant correction always wins over a
+  // regenerate. Applied AFTER the repair loop produced its candidate and BEFORE the
+  // verdict, so the gates evaluate the document that would actually ship. Strictly
+  // best-effort: a load failure (no DB in tests, network blip) must behave exactly
+  // like "no overrides" — it can never fail the task.
+  let overridesApplied = 0;
+  try {
+    const overrides = await loadOverrides(goal.siteId, task.url);
+    if (overrides.length > 0) {
+      const merged = applyOverrides(candidates, overrides);
+      if (merged.applied.length > 0) {
+        candidates = merged.result as Record<string, unknown>[];
+        overridesApplied = merged.applied.length;
+        // Re-gate the overridden document — overrides are merchant data, not a
+        // quality gate; lib/validation still disposes.
+        gates = runGates({
+          candidates,
+          requireTypes: goal.target.requireTypes,
+          minOutcome: goal.target.minOutcome,
+          requirements,
+          beforeErrorCount: task.beforeErrorCount,
+          beforeHadSchema: task.beforeHadSchema,
+        });
+      }
+    }
+  } catch {
+    // best-effort by contract: identical to the no-overrides path
+  }
+
   // ok is the deterministic L0–L3 verdict. The L6 judge is computed AFTER this and never
   // feeds into ok — gatesPassed ignores L6 by contract, so it is logged, never gating.
   const ok = gatesPassed(gates);
@@ -102,13 +134,16 @@ export async function executeTask(
   // so the audit row records *why* a page didn't stage. A success that needed the
   // LLM repair loop records how many rounds it took, so the audit shows the agent
   // self-corrected rather than passing on the first try.
-  const outcome = ok
+  const baseOutcome = ok
     ? repair.attempts > 0
       ? `staged (self-corrected in ${repair.attempts} ${repair.attempts === 1 ? "pass" : "passes"})`
       : "staged"
     : result.errorReason
       ? `processing_failed: ${result.errorReason}`
       : "gate_failed";
+  // Surface applied merchant overrides in the audit row (issue #29).
+  const outcome =
+    overridesApplied > 0 ? `${baseOutcome}, overrides:${overridesApplied}` : baseOutcome;
 
   const action: ActionRecord = {
     url: task.url,
