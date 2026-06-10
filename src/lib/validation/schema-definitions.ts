@@ -126,8 +126,13 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
         expectedTypes: ["Brand"],
       },
       {
+        // Google's product-snippet rule is ONE OF offers/review/aggregateRating
+        // (enforced as a conditional check in rich-results-requirements.ts), so
+        // `offers` alone is "recommended" here — flagging it "required" falsely
+        // failed real Products that carry only review/aggregateRating data
+        // (seen live on garnerandtow.com's @graph Product).
         name: "offers",
-        requirement: "required",
+        requirement: "recommended",
         valueType: "Object",
         expectedTypes: ["Offer", "AggregateOffer"],
       },

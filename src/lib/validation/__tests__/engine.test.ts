@@ -165,14 +165,53 @@ describe("Missing required properties", () => {
     expect(err!.message).toContain("name");
   });
 
-  it("8. Product missing 'offers' — error MISSING_REQUIRED", () => {
+  // Issue #21: Google's product-snippet rule is ONE OF offers/review/aggregateRating,
+  // not "offers required". This test previously encoded the wrong rule
+  // (MISSING_REQUIRED on offers); it now asserts the documented conditional rule.
+  it("8. Product missing offers AND review AND aggregateRating — error RICH_RESULTS_REQUIREMENT", () => {
     const { offers, ...noOffers } = validProduct;
     const result = validateSchema(noOffers);
     expect(result.valid).toBe(false);
     expect(
       result.errors.some(
-        (e) => e.code === "MISSING_REQUIRED" && e.path === "offers"
+        (e) => e.code === "RICH_RESULTS_REQUIREMENT" && e.path === "offers"
       )
+    ).toBe(true);
+  });
+
+  it("8b. Product with aggregateRating but no offers is valid (Google one-of rule), with offers only recommended", () => {
+    // The real garnerandtow.com @graph Product: name + aggregateRating + review,
+    // no offers. Google's product-snippet docs accept this; strictly requiring
+    // offers falsely failed it.
+    const { offers, ...noOffers } = validProduct;
+    const withRating = {
+      ...noOffers,
+      aggregateRating: {
+        "@type": "AggregateRating",
+        ratingValue: 5,
+        reviewCount: 1,
+        bestRating: 5,
+        worstRating: 1,
+      },
+    };
+    const result = validateSchema(withRating);
+    expect(result.valid).toBe(true);
+    expect(
+      result.errors.some((e) => e.code === "RICH_RESULTS_REQUIREMENT")
+    ).toBe(false);
+    // offers is still surfaced as a recommendation
+    expect(
+      result.warnings.some(
+        (w) => w.code === "MISSING_RECOMMENDED" && w.path === "offers"
+      )
+    ).toBe(true);
+  });
+
+  it("8c. Product with empty offers object/array still fails the one-of rule", () => {
+    const { offers, ...noOffers } = validProduct;
+    const result = validateSchema({ ...noOffers, offers: [] });
+    expect(
+      result.errors.some((e) => e.code === "RICH_RESULTS_REQUIREMENT")
     ).toBe(true);
   });
 

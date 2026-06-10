@@ -72,7 +72,8 @@ export type ValidationErrorCode =
   | "INVALID_DATE_FORMAT"
   | "INVALID_PATTERN"
   | "ENUM_FORMAT"
-  | "SUBOPTIMAL_TYPE";
+  | "SUBOPTIMAL_TYPE"
+  | "RICH_RESULTS_REQUIREMENT";
 
 /** A single validation issue found in the schema */
 export interface ValidationIssue {

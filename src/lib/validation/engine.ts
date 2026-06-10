@@ -1,4 +1,5 @@
 import { schemaDefinitions } from "./schema-definitions";
+import { checkRichResultsRequirements } from "./rich-results-requirements";
 import type {
   ValidationResult,
   ValidationIssue,
@@ -131,6 +132,13 @@ export function validateSchema(input: unknown): ValidationResult {
 
   // Validate the root object
   validateObject(obj, schemaType, "$", errors, warnings);
+
+  // Google rich-results requirements (issue #21) — conditional rules the flat
+  // property table cannot express (e.g. Product needs ONE OF offers/review/
+  // aggregateRating). Issues carry their own severity.
+  for (const issue of checkRichResultsRequirements(obj, schemaType)) {
+    (issue.severity === "error" ? errors : warnings).push(issue);
+  }
 
   return buildResult(errors, warnings, schemaType, start);
 }

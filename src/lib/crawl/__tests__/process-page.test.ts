@@ -229,6 +229,87 @@ describe("processPage", () => {
     });
   });
 
+  // Issue #20e — pages with unparseable JSON-LD blocks are "invalid schema
+  // present" (an error state), NEVER "schema missing". Treating them as missing
+  // is what made the system generate a duplicate block on garnerandtow.com.
+  describe("unparseable JSON-LD blocks (issue #20e)", () => {
+    const unparseableBlock = {
+      raw: '{"@type":"Product","additionalProperty":[{"value":"["gid://x"]"}]}',
+      parsed: null,
+      parseError: "Unexpected token g in JSON at position 42",
+      position: 0,
+    };
+
+    beforeEach(() => {
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/products/duffel",
+        statusCode: 200,
+      });
+    });
+
+    it("scan mode: only-unparseable page is 'errors' with structured detail, not 'no_schema'", async () => {
+      mockExtractJsonLd.mockReturnValue([unparseableBlock]);
+
+      const result = await processPage("https://example.com/products/duffel", "scan");
+
+      expect(result.status).toBe("errors");
+      expect(result.validationResults?.errorCount).toBe(1);
+      const entry = result.validationResults!.schemas[0];
+      expect(entry.type).toBe("InvalidJSON");
+      expect(entry.validation.errors[0].code).toBe("INVALID_JSON");
+      expect(entry.validation.errors[0].message).toContain("could not be parsed");
+      // The broken raw block is surfaced so the user/agent can see what is live
+      expect(String(entry.validation.errors[0].actualValue)).toContain("gid://x");
+      expect(result.fixedSchemas).toBeNull();
+    });
+
+    it("optimize mode: only-unparseable page does NOT AI-generate a duplicate block", async () => {
+      mockExtractJsonLd.mockReturnValue([unparseableBlock]);
+
+      const result = await processPage(
+        "https://example.com/products/duffel",
+        "optimize"
+      );
+
+      expect(result.status).toBe("errors");
+      expect(mockGenerateSchemas).not.toHaveBeenCalled();
+    });
+
+    it("scan mode: valid block + unparseable block is 'errors', unparseable entries never enter fixedSchemas", async () => {
+      mockExtractJsonLd.mockReturnValue([
+        unparseableBlock,
+        {
+          raw: '{"@type":"Organization"}',
+          parsed: { "@type": "Organization", "@context": "https://schema.org", name: "B" },
+          parseError: undefined,
+          position: 1,
+        },
+      ]);
+
+      mockValidateSchema.mockReturnValue({
+        valid: true, errors: [], warnings: [],
+        summary: { errorCount: 0, warningCount: 0, schemaType: "Organization", validationTimeMs: 1 },
+      });
+      mockFixSchema.mockImplementation((schema) => ({
+        original: schema as Record<string, unknown>,
+        fixed: schema as Record<string, unknown>,
+        fixes: [],
+        validationBefore: { valid: true, errors: [], warnings: [], summary: { errorCount: 0, warningCount: 0, schemaType: "Organization", validationTimeMs: 1 } },
+        validationAfter: { valid: true, errors: [], warnings: [], summary: { errorCount: 0, warningCount: 0, schemaType: "Organization", validationTimeMs: 1 } },
+      }));
+
+      const result = await processPage("https://example.com/products/duffel", "scan");
+
+      expect(result.status).toBe("errors");
+      expect(result.validationResults?.errorCount).toBe(1);
+      expect(result.validationResults?.schemas).toHaveLength(2);
+      // Only the real Organization schema is stageable
+      expect(result.fixedSchemas).toHaveLength(1);
+      expect(result.fixedSchemas![0]["@type"]).toBe("Organization");
+    });
+  });
+
   describe("optimize mode", () => {
     it("generates schemas via AI for pages with no existing schema", async () => {
       mockFetchPage.mockResolvedValue({

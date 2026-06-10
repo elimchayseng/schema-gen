@@ -17,6 +17,8 @@ import { fixSchema } from "@/lib/validation/fixer";
 import { generateSchemas } from "@/lib/ai/client";
 import { refineAllRecommendations } from "@/lib/ai/refinement";
 import { schemaDefinitions } from "@/lib/validation/schema-definitions";
+import type { ValidationResult } from "@/lib/validation/types";
+import type { ExtractedJsonLd } from "@/lib/url-validator/types";
 import type { ProcessMode, PageResult, PageStatus, ProcessedSchema } from "./types";
 
 export type ProgressStep =
@@ -39,6 +41,45 @@ export interface ProcessPageOptions {
 }
 
 const PAGE_TIMEOUT = 15_000; // 15s per page to prevent one slow page from blocking the batch
+
+/**
+ * Marker type for a JSON-LD block that exists on the page but could not be
+ * parsed even after the extractor's repair pipeline. It is real, live, broken
+ * structured data that Google sees — an error state to fix or override, NEVER
+ * "schema missing" (treating it as missing is what generated duplicate blocks
+ * on garnerandtow.com).
+ */
+const UNPARSEABLE_TYPE = "InvalidJSON";
+
+function unparseableSchemaEntry(item: ExtractedJsonLd): ProcessedSchema {
+  const snippet = item.raw.trim().slice(0, 500);
+  const validation: ValidationResult = {
+    valid: false,
+    errors: [
+      {
+        severity: "error",
+        path: "$",
+        message: `JSON-LD block could not be parsed: ${item.parseError ?? "Invalid JSON"}. This broken block is live on the page — invalid schema present, not missing.`,
+        code: "INVALID_JSON",
+        actualValue: snippet,
+      },
+    ],
+    warnings: [],
+    summary: {
+      errorCount: 1,
+      warningCount: 0,
+      schemaType: null,
+      validationTimeMs: 0,
+    },
+  };
+  return {
+    type: UNPARSEABLE_TYPE,
+    original: { raw: snippet },
+    fixed: { raw: snippet },
+    validation,
+    fixesApplied: [],
+  };
+}
 
 /**
  * Process a single page: fetch, extract JSON-LD, validate, and optionally AI-generate.
@@ -90,9 +131,28 @@ export async function processPage(
   onProgress?.("extracting");
   const extracted = extractJsonLd(html);
   const validParsed = extracted.filter((e) => !e.parseError && e.parsed !== null);
+  const unparseable = extracted.filter((e) => e.parseError || e.parsed === null);
 
-  // No schemas found
+  // No parseable schemas found
   if (validParsed.length === 0) {
+    // Unparseable blocks present: the page HAS schema — it is broken, not missing.
+    // Never fall through to "no_schema" (and never AI-generate a duplicate block
+    // alongside the broken one); surface it as an error state to fix/override.
+    if (unparseable.length > 0) {
+      return {
+        url,
+        status: "errors",
+        originalSchemas: null,
+        fixedSchemas: null,
+        validationResults: {
+          errorCount: unparseable.length,
+          warningCount: 0,
+          schemas: unparseable.map(unparseableSchemaEntry),
+        },
+        errorReason: `${unparseable.length} JSON-LD block(s) on the page are invalid JSON and could not be parsed`,
+      };
+    }
+
     if (mode === "optimize") {
       // AI generate schemas for this page
       return await generateForPage(url, finalUrl, html, onProgress);
@@ -132,6 +192,13 @@ export async function processPage(
     originals.push(parsed);
     totalErrors += fixResult.validationAfter.errors.length;
     totalWarnings += fixResult.validationAfter.warnings.length;
+  }
+
+  // Unparseable blocks alongside valid ones still count as live invalid schema —
+  // they force the page into an error state so they get fixed, not ignored.
+  for (const item of unparseable) {
+    processedSchemas.push(unparseableSchemaEntry(item));
+    totalErrors += 1;
   }
 
   // Determine status based on remaining issues after auto-fix
@@ -179,11 +246,14 @@ export async function processPage(
   // refinement above merges its result into processedSchemas[i].fixed. The agent's executor
   // gates result.fixedSchemas, so returning the pre-AI auto-fix here would make the agent
   // judge (and stage) the weaker schema and discard the AI's work on already-has-schema pages.
+  // Unparseable placeholders are excluded — their `fixed` is a raw snippet, not a schema,
+  // and must never be staged.
+  const stageable = processedSchemas.filter((s) => s.type !== UNPARSEABLE_TYPE);
   return {
     url,
     status,
     originalSchemas: originals,
-    fixedSchemas: processedSchemas.length > 0 ? processedSchemas.map((s) => s.fixed) : null,
+    fixedSchemas: stageable.length > 0 ? stageable.map((s) => s.fixed) : null,
     validationResults: {
       errorCount: totalErrors,
       warningCount: totalWarnings,
