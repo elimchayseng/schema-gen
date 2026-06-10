@@ -13,7 +13,7 @@
  *   else SHOPIFY_OFFLINE_TOKEN present           -> static token (no refresh)
  *   else                                          -> throw
  */
-import type { ShopifyConfig } from "./types";
+import type { ShopAppCredentials, ShopifyConfig } from "./types";
 import { assertShopifyHost, assertShopifyUrl } from "./ssrf";
 import { shopifyLog } from "./logger";
 
@@ -61,15 +61,29 @@ export function getShopifyConfig(): ShopifyConfig {
   if (!rawShop) {
     throw new Error("SHOPIFY_SHOP is not set");
   }
-  const shop = normalizeShop(rawShop);
-  assertShopifyHost(shop); // fail fast on a bad/hostile shop value
-  const apiVersion = process.env.SHOPIFY_API_VERSION?.trim() || DEFAULT_API_VERSION;
-  const baseUrl = `https://${shop}/admin/api/${apiVersion}`;
-  return { shop, apiVersion, baseUrl };
+  return getShopifyConfigForShop(rawShop);
 }
 
-/** True when app credentials are present, i.e. tokens can be minted/refreshed. */
-export function canMintTokens(): boolean {
+/**
+ * Per-shop variant of getShopifyConfig (issue #25): build the Admin API config
+ * for an explicit shop instead of env SHOPIFY_SHOP. API version still comes
+ * from env (it is a SchemaGen-wide choice, not a per-store one).
+ */
+export function getShopifyConfigForShop(shop: string): ShopifyConfig {
+  const host = normalizeShop(shop);
+  assertShopifyHost(host); // fail fast on a bad/hostile shop value
+  const apiVersion = process.env.SHOPIFY_API_VERSION?.trim() || DEFAULT_API_VERSION;
+  const baseUrl = `https://${host}/admin/api/${apiVersion}`;
+  return { shop: host, apiVersion, baseUrl };
+}
+
+/**
+ * True when app credentials are present, i.e. tokens can be minted/refreshed.
+ * Pass per-shop credentials (issue #25) to ask about a specific shop; with no
+ * argument this reflects the env pair, as before.
+ */
+export function canMintTokens(creds?: ShopAppCredentials): boolean {
+  if (creds) return !!(creds.appKey && creds.appSecret);
   return !!(process.env.SHOPIFY_APP_KEY && process.env.SHOPIFY_APP_SECRET);
 }
 
@@ -77,11 +91,15 @@ export function canMintTokens(): boolean {
  * Mint a fresh Admin API token via the OAuth client_credentials grant. The app
  * must already be installed on the shop (an un-installed app returns
  * 400 app_not_installed). Secrets are sent in the body and never logged.
+ * Per-shop credentials (issue #25) take precedence over the env pair.
  */
-export async function mintToken(shop: string): Promise<CachedToken> {
+export async function mintToken(
+  shop: string,
+  creds?: ShopAppCredentials
+): Promise<CachedToken> {
   const host = normalizeShop(shop);
-  const clientId = process.env.SHOPIFY_APP_KEY;
-  const clientSecret = process.env.SHOPIFY_APP_SECRET;
+  const clientId = creds?.appKey ?? process.env.SHOPIFY_APP_KEY;
+  const clientSecret = creds?.appSecret ?? process.env.SHOPIFY_APP_SECRET;
   if (!clientId || !clientSecret) {
     throw new Error("SHOPIFY_APP_KEY and SHOPIFY_APP_SECRET are required to mint a token");
   }
@@ -142,11 +160,19 @@ export function invalidateTokenCache(shop: string): void {
  * Resolve a valid Admin API token for a shop. Mints + caches when app
  * credentials are present (refreshing near expiry); otherwise falls back to a
  * static SHOPIFY_OFFLINE_TOKEN.
+ *
+ * Pass per-shop `creds` (issue #25, from resolveShopCredentials) to mint with
+ * that shop's app key pair; the cache and single-flight maps are already keyed
+ * per shop, so tokens for different stores never collide. Without `creds`,
+ * behavior is exactly the pre-#25 env path.
  */
-export async function getOfflineToken(shop: string): Promise<string> {
+export async function getOfflineToken(
+  shop: string,
+  creds?: ShopAppCredentials
+): Promise<string> {
   const host = normalizeShop(shop);
 
-  if (!canMintTokens()) {
+  if (!canMintTokens(creds)) {
     const token = process.env.SHOPIFY_OFFLINE_TOKEN;
     if (!token) {
       throw new Error(
@@ -172,7 +198,7 @@ export async function getOfflineToken(shop: string): Promise<string> {
   // Single-flight: dedupe concurrent mints for the same shop.
   let pending = pendingMints.get(host);
   if (!pending) {
-    pending = mintToken(host)
+    pending = mintToken(host, creds)
       .then((minted) => {
         tokenCache.set(host, minted);
         return minted;

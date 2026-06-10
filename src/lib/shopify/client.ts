@@ -16,8 +16,10 @@ import {
   canMintTokens,
   getOfflineToken,
   getShopifyConfig,
+  getShopifyConfigForShop,
   invalidateTokenCache,
 } from "./config";
+import type { ShopContext } from "./types";
 import { assertShopifyUrl } from "./ssrf";
 import { shopifyLog } from "./logger";
 
@@ -45,6 +47,12 @@ export interface ShopifyFetchOptions {
   body?: unknown;
   query?: Record<string, string>;
   retry?: Partial<RetryConfig>;
+  /**
+   * Per-shop target (issue #25). When set, the request goes to this shop and
+   * tokens are minted with its credentials; when omitted, the env-configured
+   * shop is used (pre-#25 behavior, unchanged).
+   */
+  shopContext?: ShopContext;
 }
 
 /** Error carrying the HTTP status (0 for non-HTTP failures like timeouts). */
@@ -108,8 +116,9 @@ export async function shopifyFetch<T>(
   opts: ShopifyFetchOptions = {}
 ): Promise<T> {
   const cfg: RetryConfig = { ...DEFAULT_RETRY, ...opts.retry };
-  const config = getShopifyConfig();
-  let token = await getOfflineToken(config.shop);
+  const ctx = opts.shopContext;
+  const config = ctx ? getShopifyConfigForShop(ctx.shop) : getShopifyConfig();
+  let token = await getOfflineToken(config.shop, ctx?.credentials);
   const url = buildUrl(config.baseUrl, path, opts.query);
   assertShopifyUrl(url); // SSRF guard on the exact URL we are about to hit
   const method = opts.method ?? "GET";
@@ -150,13 +159,13 @@ export async function shopifyFetch<T>(
 
     // Token expired/invalid: re-mint once and retry. Only when we can actually
     // mint (a static token can't be refreshed) and only once (no auth loop).
-    if (res.status === 401 && canMintTokens() && !reauthed) {
+    if (res.status === 401 && canMintTokens(ctx?.credentials) && !reauthed) {
       shopifyLog("warn", "Shopify 401, re-minting token and retrying once", {
         path,
       });
       invalidateTokenCache(config.shop);
       try {
-        token = await getOfflineToken(config.shop);
+        token = await getOfflineToken(config.shop, ctx?.credentials);
       } catch (err) {
         // Keep the ShopifyError contract: a failed re-mint surfaces as a 401
         // ShopifyError, not a bare Error callers can't catch via instanceof.
