@@ -51,6 +51,19 @@ Every fix is deterministic, unit-tested (655 tests green), and none loosened a
 quality bar: a parent type still never satisfies a more-specific requirement,
 and repaired LLM output still passes the zod shape gate and all schema gates.
 
+## Merchant tweak flow — proven live (2026-06-10)
+
+Run against the real duffel page, full loop with persistence:
+
+1. Fresh generation staged `brand: {"@type":"Brand","name":"Garner and Tow"}`
+2. Merchant (natural language): *"The brand name is wrong — it must be exactly
+   'Garner & Tow' (with an ampersand)"*
+3. LLM proposed `brand.name = "Garner & Tow"`; deterministic apply +
+   `validateSchema` gate passed; persisted to `merchant_overrides`
+4. **A fresh executor run regenerated the page from scratch and the staged
+   output carried `"Garner & Tow"`** (`outcome: staged, overrides:1`) — the
+   sticky override wins over every future regeneration.
+
 ## What this proves / what remains
 
 **Proven, against the live store:** enumeration → classification → validation

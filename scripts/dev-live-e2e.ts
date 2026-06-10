@@ -56,7 +56,7 @@ async function main() {
 
   const goal: Goal = {
     siteId: site.id,
-    target: { scope: "url_list", urls: PRODUCTS, requireTypes: ["Product"], minOutcome: "rich_results_eligible" },
+    target: { scope: "url_list", urls: PRODUCTS, requireTypes: ["Product", "BreadcrumbList"], minOutcome: "rich_results_eligible" },
     // authoritative ON: suppress the theme's own Product JSON-LD in the staging
     // duplicate so the dup gate can demand exactly one valid Product block.
     constraints: { maxPages: PRODUCTS.length, allowSchemaTypeChange: false, authoritative: true },
