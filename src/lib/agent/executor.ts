@@ -6,9 +6,9 @@
  */
 import { processPage } from "@/lib/crawl/process-page";
 import { urlToTemplateTarget, type SnippetEntry } from "@/lib/shopify/snippet";
-import { runGates } from "./gates";
 import { gatesPassed } from "./types";
 import { l6Judge } from "./judge";
+import { repairToGoal, type RefineFn } from "./repair";
 import type { ActionRecord, Goal, PlannedTask } from "./types";
 
 export interface ExecutedTask {
@@ -24,6 +24,12 @@ export interface ExecuteOptions {
   judge?: boolean;
   /** Injectable judge for tests; defaults to l6Judge. */
   judgeFn?: typeof l6Judge;
+  /** Max LLM repair rounds when the first pass fails the gates. Default 3; 0 disables. */
+  maxRepairAttempts?: number;
+  /** Injectable LLM refine fn for the repair loop (tests pass a deterministic stub). */
+  refineFn?: RefineFn;
+  /** Progress sink: fired while the agent self-corrects a page. */
+  onRepairAttempt?: (url: string, attempt: number, detail: string) => void;
 }
 
 export async function executeTask(
@@ -33,15 +39,26 @@ export async function executeTask(
 ): Promise<ExecutedTask> {
   // optimize = extract -> validate -> fix -> AI generate -> refine.
   const result = await processPage(task.url, "optimize");
-  const candidates = (result.fixedSchemas ?? []) as Record<string, unknown>[];
+  const initialCandidates = (result.fixedSchemas ?? []) as Record<string, unknown>[];
 
-  const gates = runGates({
-    candidates,
+  // Self-repair loop: sanitize junk types, deterministically auto-fix, then ask the LLM
+  // to correct anything still invalid — re-gating after every round. This is what turns
+  // "fails on the first invalid pass" into "keeps correcting until the gates pass".
+  const repair = await repairToGoal({
+    url: task.url,
+    candidates: initialCandidates,
     requireTypes: goal.target.requireTypes,
     minOutcome: goal.target.minOutcome,
     beforeErrorCount: task.beforeErrorCount,
     beforeHadSchema: task.beforeHadSchema,
+    maxAttempts: opts.maxRepairAttempts,
+    refineFn: opts.refineFn,
+    onAttempt: opts.onRepairAttempt
+      ? (n, d) => opts.onRepairAttempt!(task.url, n, d)
+      : undefined,
   });
+  const candidates = repair.candidates;
+  const gates = repair.gates;
   // ok is the deterministic L0–L3 verdict. The L6 judge is computed AFTER this and never
   // feeds into ok — gatesPassed ignores L6 by contract, so it is logged, never gating.
   const ok = gatesPassed(gates);
@@ -63,9 +80,13 @@ export async function executeTask(
 
   // Distinguish a clean gate rejection from an upstream processing/AI failure
   // (processPage swallows AI errors and returns errorReason rather than throwing)
-  // so the audit row records *why* a page didn't stage.
+  // so the audit row records *why* a page didn't stage. A success that needed the
+  // LLM repair loop records how many rounds it took, so the audit shows the agent
+  // self-corrected rather than passing on the first try.
   const outcome = ok
-    ? "staged"
+    ? repair.attempts > 0
+      ? `staged (self-corrected in ${repair.attempts} ${repair.attempts === 1 ? "pass" : "passes"})`
+      : "staged"
     : result.errorReason
       ? `processing_failed: ${result.errorReason}`
       : "gate_failed";

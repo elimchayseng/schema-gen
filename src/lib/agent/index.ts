@@ -29,6 +29,11 @@ export {
   setControl,
 } from "./audit";
 export { gatesPassed } from "./types";
+export {
+  groupRunPages,
+  type RunGroupingInput,
+  type RunPageGroups,
+} from "./run-grouping";
 export type {
   Goal,
   GoalTarget,

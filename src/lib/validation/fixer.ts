@@ -210,13 +210,30 @@ function fixEnumValue(
   if (!propDef.enumValues || typeof value !== "string") return;
 
   if (!propDef.enumValues.includes(value)) {
-    const fullUrl = `https://schema.org/${value}`;
-    if (propDef.enumValues.includes(fullUrl)) {
-      container[key] = fullUrl;
+    // Try a series of normalizations to map a malformed enum value onto a valid
+    // schema.org enum URL. Covers the common real-world cases seen on live stores:
+    //   "InStock"                    → shorthand (no prefix)
+    //   "http://schema.org/InStock"  → wrong protocol (Shopify/Yoast emit http://)
+    //   "schema.org/InStock"         → missing protocol
+    //   "https://schema.org/instock" → wrong case on the final segment
+    const lastSegment = value.split("/").filter(Boolean).pop() ?? value;
+    const lower = lastSegment.toLowerCase();
+    const byCaseInsensitive = propDef.enumValues.find(
+      (e) => e.toLowerCase() === `https://schema.org/${lower}`
+    );
+    const candidates = [
+      `https://schema.org/${lastSegment}`,
+      value.replace(/^http:\/\//i, "https://"),
+      byCaseInsensitive,
+    ].filter((c): c is string => typeof c === "string");
+
+    const match = candidates.find((c) => propDef.enumValues!.includes(c));
+    if (match) {
+      container[key] = match;
       fixes.push({
         path,
         code: "ENUM_FORMAT",
-        description: `Changed '${value}' to '${fullUrl}'`,
+        description: `Changed '${value}' to '${match}'`,
       });
     }
   }

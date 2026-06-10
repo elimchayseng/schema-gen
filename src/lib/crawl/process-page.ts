@@ -97,7 +97,6 @@ export async function processPage(
   onProgress?.("validating");
   const processedSchemas: ProcessedSchema[] = [];
   const originals: Record<string, unknown>[] = [];
-  const fixed: Record<string, unknown>[] = [];
   let totalErrors = 0;
   let totalWarnings = 0;
 
@@ -118,7 +117,6 @@ export async function processPage(
     });
 
     originals.push(parsed);
-    fixed.push(fixResult.fixed);
     totalErrors += fixResult.validationAfter.errors.length;
     totalWarnings += fixResult.validationAfter.warnings.length;
   }
@@ -164,11 +162,15 @@ export async function processPage(
     }
   }
 
+  // fixedSchemas MUST come from processedSchemas, not a separate pre-AI array: the AI
+  // refinement above merges its result into processedSchemas[i].fixed. The agent's executor
+  // gates result.fixedSchemas, so returning the pre-AI auto-fix here would make the agent
+  // judge (and stage) the weaker schema and discard the AI's work on already-has-schema pages.
   return {
     url,
     status,
     originalSchemas: originals,
-    fixedSchemas: fixed.length > 0 ? fixed : null,
+    fixedSchemas: processedSchemas.length > 0 ? processedSchemas.map((s) => s.fixed) : null,
     validationResults: {
       errorCount: totalErrors,
       warningCount: totalWarnings,

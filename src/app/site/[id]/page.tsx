@@ -324,6 +324,12 @@ export default function SiteDashboard() {
         <span className="rounded-sm bg-surface-3 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-text-secondary">
           {crawlStatus.totalUrls} pages
         </span>
+        <button
+          onClick={() => router.push(`/site/${crawlId}/agent`)}
+          className="btn-optimize ml-auto rounded-md bg-accent px-4 py-2 text-xs font-bold text-surface-0 transition-all hover:bg-accent-bright"
+        >
+          ⚡ Make products Google-ready
+        </button>
       </div>
 
       {/* Phase Stepper */}

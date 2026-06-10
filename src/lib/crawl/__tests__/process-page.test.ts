@@ -279,6 +279,70 @@ describe("processPage", () => {
       expect(mockGenerateSchemas).toHaveBeenCalled();
     });
 
+    it("returns the AI-REFINED schema as fixedSchemas for a page that already had schema", async () => {
+      // Regression: the agent gates result.fixedSchemas. The had-schema path must surface the
+      // AI-refined schema, NOT the weaker pre-AI auto-fix, or the agent discards the AI's work.
+      const brokenProduct = { "@type": "Product", "@context": "https://schema.org", name: "Tee" };
+      const autoFixedProduct = { ...brokenProduct }; // auto-fixer alone can't add offers
+      const aiRefinedProduct = {
+        "@type": "Product",
+        "@context": "https://schema.org",
+        name: "Tee",
+        offers: { "@type": "Offer", price: 29.99, priceCurrency: "USD" },
+      };
+
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/product",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([
+        { raw: "{}", parsed: brokenProduct, parseError: undefined, position: 0 },
+      ]);
+      // Still invalid after the deterministic fixer (missing offers) -> triggers AI refine.
+      mockValidateSchema.mockReturnValue({
+        valid: false,
+        errors: [{ severity: "error", path: "offers", message: "Required property 'offers' is missing from Product.", code: "MISSING_REQUIRED" }],
+        warnings: [],
+        summary: { errorCount: 1, warningCount: 0, schemaType: "Product", validationTimeMs: 1 },
+      });
+      mockFixSchema.mockReturnValue({
+        original: brokenProduct,
+        fixed: autoFixedProduct,
+        fixes: [],
+        validationBefore: { valid: false, errors: [{ severity: "error", path: "offers", message: "x", code: "MISSING_REQUIRED" }], warnings: [], summary: { errorCount: 1, warningCount: 0, schemaType: "Product", validationTimeMs: 1 } },
+        validationAfter: { valid: false, errors: [{ severity: "error", path: "offers", message: "x", code: "MISSING_REQUIRED" }], warnings: [], summary: { errorCount: 1, warningCount: 0, schemaType: "Product", validationTimeMs: 1 } },
+      });
+      mockGenerateSchemas.mockResolvedValue({
+        pageType: "product",
+        recommendations: [
+          { type: "Product", priority: 1 as const, rationale: "r", jsonld: aiRefinedProduct, shopifyInstructions: "s" },
+        ],
+        mergedJsonld: [],
+        notes: [],
+      });
+      mockRefineAll.mockResolvedValue([
+        {
+          type: "Product",
+          priority: 1 as const,
+          rationale: "r",
+          jsonld: aiRefinedProduct,
+          shopifyInstructions: "s",
+          validation: { valid: true, errors: [], warnings: [], summary: { errorCount: 0, warningCount: 0, schemaType: "Product", validationTimeMs: 1 } },
+          fixes: [],
+          enhancementNotes: [],
+          refinementPasses: 1,
+        },
+      ]);
+
+      const result = await processPage("https://example.com/product", "optimize");
+
+      expect(result.fixedSchemas).toHaveLength(1);
+      // The agent gates THIS — it must be the AI-refined Product (with offers), not the auto-fix.
+      expect(result.fixedSchemas?.[0]).toHaveProperty("offers");
+      expect(result.fixedSchemas?.[0]).toEqual(aiRefinedProduct);
+    });
+
     it("handles AI generation failure gracefully", async () => {
       mockFetchPage.mockResolvedValue({
         html: "<html></html>",
