@@ -359,4 +359,37 @@ describe("processPage", () => {
       expect(result.errorReason).toContain("AI generation failed");
     });
   });
+
+  describe("fetchHeaders (password-gated storefront)", () => {
+    it("forwards fetchHeaders to fetchPage so a gated dev store can be perceived", async () => {
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://shop.myshopify.com/products/x",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([]);
+
+      await processPage("https://shop.myshopify.com/products/x", "scan", undefined, {
+        fetchHeaders: { Cookie: "storefront_digest=abc123" },
+      });
+
+      expect(mockFetchPage).toHaveBeenCalledWith(
+        "https://shop.myshopify.com/products/x",
+        { headers: { Cookie: "storefront_digest=abc123" } }
+      );
+    });
+
+    it("fetches anonymously (empty opts) when no fetchHeaders are given", async () => {
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([]);
+
+      await processPage("https://example.com/", "scan");
+
+      expect(mockFetchPage).toHaveBeenCalledWith("https://example.com/", {});
+    });
+  });
 });

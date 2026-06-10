@@ -145,8 +145,12 @@ describe("runGoal kill (Phase 4) — no half-written theme", () => {
     });
 
     // perceive scanned both; no optimize (executeTask) ever ran.
-    expect(mockProcess).toHaveBeenCalledWith(B, "scan");
-    expect(mockProcess).toHaveBeenCalledWith(C, "scan");
+    expect(mockProcess).toHaveBeenCalledWith(B, "scan", undefined, {
+      fetchHeaders: undefined,
+    });
+    expect(mockProcess).toHaveBeenCalledWith(C, "scan", undefined, {
+      fetchHeaders: undefined,
+    });
     expect(mockProcess).not.toHaveBeenCalledWith(expect.anything(), "optimize");
     expect(applyMock.fn).not.toHaveBeenCalled();
     expect(result.killed).toBe(true);

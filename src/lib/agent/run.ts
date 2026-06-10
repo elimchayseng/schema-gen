@@ -10,7 +10,7 @@ import { fetchPage } from "@/lib/url-validator/fetcher";
 import { createAdminClient } from "@/lib/supabase";
 import { getRichResultInfo } from "@/lib/validation/rich-results";
 import { renderSchemaGenSnippet, urlToTemplateTarget } from "@/lib/shopify/snippet";
-import { getShopifyConfig } from "@/lib/shopify/config";
+import { getShopifyConfig, normalizeShop } from "@/lib/shopify/config";
 import type { SnippetEntry } from "@/lib/shopify/snippet";
 import type { PageResult } from "@/lib/crawl/types";
 import { planTasks } from "./planner";
@@ -283,6 +283,34 @@ export async function runGoal(
       }
     }
 
+    // Storefront-password auth for perceive + execute. A Shopify dev store (or any store
+    // with "Password protect this store" on) 302-redirects every storefront request to
+    // /password, so processPage would only ever see the password wall. Obtain the
+    // storefront_digest cookie once (same one L4 verify uses; getStorefrontCookie caches
+    // per-shop in-process) and attach it ONLY to fetches on the configured shop host —
+    // public sites in the goal are still fetched anonymously. Best-effort: no password
+    // configured, or any failure, degrades to anonymous fetches (the prior behavior).
+    let shopHost = "";
+    let storefrontCookie: string | null = null;
+    try {
+      shopHost = normalizeShop(getShopifyConfig().shop);
+      storefrontCookie = await getStorefrontCookie(getShopifyConfig().shop);
+    } catch {
+      shopHost = "";
+      storefrontCookie = null;
+    }
+    const headersFor = (u: string): Record<string, string> | undefined => {
+      if (!storefrontCookie || !shopHost) return undefined;
+      try {
+        if (normalizeShop(new URL(u).hostname) === shopHost) {
+          return { Cookie: storefrontCookie };
+        }
+      } catch {
+        /* unparseable URL → fetch anonymously */
+      }
+      return undefined;
+    };
+
     emit({ phase: "perceive", runId, perceived: 0, queued: 0 });
     const perceived: PerceivedPage[] = [];
     let killed = false;
@@ -293,7 +321,9 @@ export async function runGoal(
         killed = true;
         break;
       }
-      const scans = await Promise.all(batch.map((u) => processPage(u, "scan")));
+      const scans = await Promise.all(
+        batch.map((u) => processPage(u, "scan", undefined, { fetchHeaders: headersFor(u) }))
+      );
       for (let i = 0; i < batch.length; i++) {
         perceived.push(toPerceived(goal, batch[i], scans[i]));
         emit({ phase: "perceive", url: batch[i], perceived: perceived.length });
@@ -340,7 +370,9 @@ export async function runGoal(
           break;
         }
         const results = await Promise.all(
-          batch.map((task) => executeTask(goal, task, { judge }))
+          batch.map((task) =>
+            executeTask(goal, task, { judge, fetchHeaders: headersFor(task.url) })
+          )
         );
         let halted = false;
         for (const ex of results) {

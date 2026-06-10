@@ -29,6 +29,15 @@ export type ProgressStep =
 
 export type ProgressCallback = (step: ProgressStep, detail?: string) => void;
 
+export interface ProcessPageOptions {
+  /**
+   * Extra request headers forwarded to the page fetch — e.g. a `Cookie` carrying the
+   * `storefront_digest` for a password-protected Shopify storefront, so the agent can
+   * perceive a gated dev store through the password wall (same cookie L4 verify uses).
+   */
+  fetchHeaders?: Record<string, string>;
+}
+
 const PAGE_TIMEOUT = 15_000; // 15s per page to prevent one slow page from blocking the batch
 
 /**
@@ -38,7 +47,8 @@ const PAGE_TIMEOUT = 15_000; // 15s per page to prevent one slow page from block
 export async function processPage(
   url: string,
   mode: ProcessMode,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  opts: ProcessPageOptions = {}
 ): Promise<PageResult> {
   // Fetch page HTML with timeout
   onProgress?.("fetching");
@@ -46,7 +56,10 @@ export async function processPage(
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), PAGE_TIMEOUT);
-    fetchResult = await fetchPage(url);
+    fetchResult = await fetchPage(
+      url,
+      opts.fetchHeaders ? { headers: opts.fetchHeaders } : {}
+    );
     clearTimeout(timeout);
   } catch (err) {
     return {

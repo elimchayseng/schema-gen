@@ -9,8 +9,9 @@
  * sees the password wall, so L4 fails and the apply rolls back even though the
  * write succeeded. That's the "fails right after writing" symptom.
  *
- * The fix: submit the storefront password once to obtain the `storefront_digest`
- * cookie Shopify sets for an authenticated visitor, then send that cookie on the
+ * The fix: submit the storefront password once to obtain the session cookie
+ * Shopify sets for an authenticated visitor (`_shopify_essential` on current
+ * stores, `storefront_digest` on older ones), then send that cookie jar on the
  * verify fetch. With the cookie present, the storefront renders normally (and
  * honors `preview_theme_id`), so L4 can read the real page.
  *
@@ -80,21 +81,39 @@ export async function getStorefrontCookie(
         ? res.headers.getSetCookie()
         : (res.headers.get("set-cookie") ? [res.headers.get("set-cookie") as string] : []);
 
-    const digest = setCookies
-      .map((c) => c.split(";")[0])
-      .find((c) => c.startsWith("storefront_digest="));
+    // Build a cookie jar from every Set-Cookie's first `name=value` segment (drop the
+    // attributes and any deletion cookies with an empty value). Older stores unlocked the
+    // storefront via `storefront_digest`; current Shopify authenticates the unlocked
+    // session through `_shopify_essential`. We echo the whole jar back (what a browser
+    // does) and treat the presence of EITHER auth cookie as success — so the helper keeps
+    // working across Shopify's cookie-name change instead of silently returning null.
+    const pairs = setCookies
+      .map((c) => c.split(";")[0].trim())
+      .filter((p) => {
+        const eq = p.indexOf("=");
+        return eq > 0 && p.slice(eq + 1).length > 0;
+      });
+    const names = pairs.map((p) => p.slice(0, p.indexOf("=")));
+    const authed = names.some(
+      (n) => n === "_shopify_essential" || n === "storefront_digest"
+    );
 
-    if (!digest) {
-      shopifyLog("warn", "Storefront password submitted but no storefront_digest cookie returned", {
+    if (!authed) {
+      shopifyLog("warn", "Storefront password submitted but no session cookie returned", {
         shop: host,
         status: res.status,
+        cookieNames: names,
       });
       return null;
     }
 
-    cookieCache.set(host, digest);
-    shopifyLog("info", "Obtained storefront_digest cookie for live verify", { shop: host });
-    return digest;
+    const jar = pairs.join("; ");
+    cookieCache.set(host, jar);
+    shopifyLog("info", "Obtained storefront session cookie for live verify", {
+      shop: host,
+      cookieNames: names,
+    });
+    return jar;
   } catch (err) {
     shopifyLog("warn", "Failed to obtain storefront cookie", {
       shop: host,

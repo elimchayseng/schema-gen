@@ -30,6 +30,11 @@ export interface ExecuteOptions {
   refineFn?: RefineFn;
   /** Progress sink: fired while the agent self-corrects a page. */
   onRepairAttempt?: (url: string, attempt: number, detail: string) => void;
+  /**
+   * Extra fetch headers (e.g. a storefront-password `Cookie`) forwarded to the page
+   * fetch inside processPage, so the executor can read a password-gated dev store.
+   */
+  fetchHeaders?: Record<string, string>;
 }
 
 export async function executeTask(
@@ -38,7 +43,9 @@ export async function executeTask(
   opts: ExecuteOptions = {}
 ): Promise<ExecutedTask> {
   // optimize = extract -> validate -> fix -> AI generate -> refine.
-  const result = await processPage(task.url, "optimize");
+  const result = await processPage(task.url, "optimize", undefined, {
+    fetchHeaders: opts.fetchHeaders,
+  });
   const initialCandidates = (result.fixedSchemas ?? []) as Record<string, unknown>[];
 
   // Self-repair loop: sanitize junk types, deterministically auto-fix, then ask the LLM

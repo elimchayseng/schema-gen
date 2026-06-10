@@ -50,17 +50,32 @@ describe("getStorefrontCookie", () => {
     return new Response(null, { status, headers });
   }
 
-  it("submits the password and extracts the storefront_digest cookie", async () => {
+  it("submits the password and keeps the legacy storefront_digest cookie", async () => {
     global.fetch = vi.fn(async () =>
       cookieResponse(["storefront_digest=abc123; path=/; HttpOnly", "_other=ignore; path=/"])
     ) as unknown as typeof fetch;
 
     const cookie = await getStorefrontCookie("ethan-dev-store-1.myshopify.com");
-    expect(cookie).toBe("storefront_digest=abc123");
+    // The whole jar is echoed (browser behavior); the auth cookie must be present.
+    expect(cookie).toContain("storefront_digest=abc123");
+  });
+
+  it("captures the current _shopify_essential session cookie (Shopify's new wall)", async () => {
+    global.fetch = vi.fn(async () =>
+      cookieResponse([
+        "by=1; path=/",
+        "_shopify_essential=:abc.def:; Max-Age=31536000; path=/; HttpOnly; Secure",
+      ])
+    ) as unknown as typeof fetch;
+
+    const cookie = await getStorefrontCookie("ethan-dev-store-1.myshopify.com");
+    expect(cookie).toContain("_shopify_essential=:abc.def:");
+    // Other non-attribute cookies ride along in the jar.
+    expect(cookie).toContain("by=1");
   });
 
   it("caches the cookie so the password is submitted only once per shop", async () => {
-    const fetchSpy = vi.fn(async () => cookieResponse(["storefront_digest=zzz; path=/"]));
+    const fetchSpy = vi.fn(async () => cookieResponse(["_shopify_essential=zzz; path=/"]));
     global.fetch = fetchSpy as unknown as typeof fetch;
 
     await getStorefrontCookie("shop.myshopify.com");
@@ -68,8 +83,15 @@ describe("getStorefrontCookie", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("returns null when no storefront_digest cookie comes back", async () => {
+  it("returns null when no recognized session cookie comes back", async () => {
     global.fetch = vi.fn(async () => cookieResponse(["_only=nope; path=/"], 200)) as unknown as typeof fetch;
+    expect(await getStorefrontCookie("shop.myshopify.com")).toBeNull();
+  });
+
+  it("ignores deletion cookies (empty value) when deciding success", async () => {
+    global.fetch = vi.fn(async () =>
+      cookieResponse(["storefront_digest=; Max-Age=0; path=/"], 200)
+    ) as unknown as typeof fetch;
     expect(await getStorefrontCookie("shop.myshopify.com")).toBeNull();
   });
 
