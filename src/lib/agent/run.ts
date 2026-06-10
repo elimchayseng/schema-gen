@@ -156,11 +156,22 @@ async function getSiteRow(
   siteId: string
 ): Promise<{ domain: string; shopDomain: string | null }> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("sites")
     .select("domain, shop_domain")
     .eq("id", siteId)
     .single();
+  // Pre-migration-009 installs have no sites.shop_domain column. Degrade to the
+  // domain-only select (per-site Shopify context simply stays unavailable) instead
+  // of failing the whole run on a schema-version mismatch.
+  if (error?.message?.includes("shop_domain")) {
+    warn("sites.shop_domain missing (migration 009 not applied); per-site context disabled", error.message);
+    ({ data, error } = await supabase
+      .from("sites")
+      .select("domain")
+      .eq("id", siteId)
+      .single());
+  }
   if (error || !data) {
     throw new Error(`Could not resolve site domain for ${siteId}: ${error?.message}`);
   }

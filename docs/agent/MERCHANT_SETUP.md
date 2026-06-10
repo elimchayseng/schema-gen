@@ -72,9 +72,13 @@ This is optional; nothing requires merchant review.
 
 ## Operator notes (agency side)
 
-- Apply Supabase migrations `008`–`011` before the first per-site run
+- Apply Supabase migrations `008`–`012` before the first per-site run
   (`shopify_credentials`, `sites.shop_domain`, `agent_runs.resolved_urls`,
-  `merchant_overrides`).
+  `merchant_overrides`, authoritative action kinds). Convenience concat for the
+  dashboard SQL editor: `docs/agent/pending-migrations-008-012.sql`. The agent
+  degrades gracefully on unmigrated schemas (per-site context and exact
+  not-reached accounting are disabled with warnings) but staging/override
+  features need the migrations.
 - Credentials are stored server-side (service-role only) via
   `POST /api/agent/provision` with `{url, shopDomain, appKey, appSecret,
   storefrontPassword?}` or `upsertShopCredentials()` directly. Tokens are
