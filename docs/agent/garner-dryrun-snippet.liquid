@@ -40,7 +40,7 @@
   {
     "@context": "https://schema.org/",
     "@type": "Product",
-    "name": "Bicycle Duffel Bag | Rolltop for cycling and commuting",
+    "name": "Duffel",
     "description": "Whether you're navigating your commute to the office followed by a gym session, or dashing to the grocery store for last-minute essentials, this versatile bag ensures you can carry everything you need from dawn till dusk.",
     "image": "https://garnerandtow.com/cdn/shop/files/Duffel-Slate-PDP_01.jpg?v=1738993037",
     "sku": "6711082057867",
@@ -48,17 +48,18 @@
       "@type": "Brand",
       "name": "Garner and Tow"
     },
-    "url": "https://garnerandtow.com/products/duffel",
     "offers": {
       "@type": "Offer",
-      "price": "300.00",
-      "priceCurrency": "USD",
-      "availability": "https://schema.org/InStock",
       "url": "https://garnerandtow.com/products/duffel",
+      "priceCurrency": "USD",
+      "price": "300.00",
+      "availability": "https://schema.org/InStock",
       "priceValidUntil": "2025-12-31",
       "itemCondition": "https://schema.org/NewCondition"
     },
-    "color": "Slate"
+    "color": "Slate",
+    "material": "Durable fabric",
+    "url": "https://garnerandtow.com/products/duffel"
   },
   {
     "@context": "https://schema.org/",
@@ -189,20 +190,51 @@
     "name": "Sling",
     "description": "The Sling is designed for seamless integration with your cycling adventures. This innovative frame bag doubles as a convenient sling-style bag, offering the perfect blend of utility and style. Compact yet capacious, it comfortably accommodates your essentials—from a trusty water bottle to a handy notebook and everything in between.",
     "image": "https://garnerandtow.com/cdn/shop/files/Sling-Slate-PDP_01.jpg?v=1739161588",
-    "sku": "sling",
+    "url": "https://garnerandtow.com/products/sling",
+    "sku": "SLING-MULTI",
     "brand": {
       "@type": "Brand",
       "name": "Garner and Tow"
     },
-    "url": "https://garnerandtow.com/products/sling",
     "offers": {
-      "@type": "Offer",
+      "@type": "AggregateOffer",
       "url": "https://garnerandtow.com/products/sling",
       "priceCurrency": "USD",
-      "price": "99.00",
-      "availability": "https://schema.org/InStock",
-      "priceValidUntil": "2025-12-31",
-      "itemCondition": "https://schema.org/NewCondition"
+      "lowPrice": "99.00",
+      "highPrice": "99.00",
+      "offerCount": "3",
+      "offers": [
+        {
+          "@type": "Offer",
+          "url": "https://garnerandtow.com/products/sling?variant=39775162138763",
+          "priceCurrency": "USD",
+          "price": "99.00",
+          "availability": "https://schema.org/InStock",
+          "itemCondition": "https://schema.org/NewCondition",
+          "name": "Sling - Slate",
+          "sku": "39775162138763"
+        },
+        {
+          "@type": "Offer",
+          "url": "https://garnerandtow.com/products/sling?variant=39775162171531",
+          "priceCurrency": "USD",
+          "price": "99.00",
+          "availability": "https://schema.org/InStock",
+          "itemCondition": "https://schema.org/NewCondition",
+          "name": "Sling - Olive",
+          "sku": "39775162171531"
+        },
+        {
+          "@type": "Offer",
+          "url": "https://garnerandtow.com/products/sling?variant=39775162204299",
+          "priceCurrency": "USD",
+          "price": "99.00",
+          "availability": "https://schema.org/InStock",
+          "itemCondition": "https://schema.org/NewCondition",
+          "name": "Sling - Black",
+          "sku": "39775162204299"
+        }
+      ]
     },
     "color": "Slate",
     "material": "Waxed Canvas"
@@ -216,8 +248,8 @@
   {
     "@context": "https://schema.org/",
     "@type": "BreadcrumbList",
-    "name": "Breadcrumb Navigation",
-    "description": "Navigation path showing the location of the Tote product page within the site hierarchy",
+    "name": "Tote Product Navigation",
+    "description": "Breadcrumb navigation showing the path from home through products to the Tote product page",
     "itemListElement": [
       {
         "@type": "ListItem",
@@ -276,7 +308,9 @@
       "availability": "https://schema.org/InStock",
       "priceValidUntil": "2025-12-31",
       "itemCondition": "https://schema.org/NewCondition"
-    }
+    },
+    "color": "Slate",
+    "material": "Durable fabric"
   }
 ]
 </script>
@@ -295,27 +329,21 @@
       "@type": "Brand",
       "name": "Garner and Tow"
     },
+    "color": "Slate",
     "offers": {
       "@type": "Offer",
       "url": "https://garnerandtow.com/products/pouch",
       "priceCurrency": "USD",
       "price": "50.00",
       "availability": "https://schema.org/InStock",
-      "priceValidUntil": "2025-12-31",
-      "itemCondition": "https://schema.org/NewCondition",
-      "seller": {
-        "@type": "Organization",
-        "name": "Garner and Tow",
-        "url": "https://garnerandtow.com"
-      }
-    },
-    "color": "Slate"
+      "priceValidUntil": "2025-12-31"
+    }
   },
   {
     "@context": "https://schema.org/",
     "@type": "BreadcrumbList",
     "name": "Pouch Product Navigation",
-    "description": "Breadcrumb navigation showing the path from homepage through products to the Pouch product page",
+    "description": "Breadcrumb navigation showing the path from home page through products to the Pouch product page",
     "itemListElement": [
       {
         "@type": "ListItem",
@@ -535,8 +563,8 @@
   {
     "@context": "https://schema.org/",
     "@type": "BreadcrumbList",
-    "name": "Refinishing Wax Product Navigation",
-    "description": "Breadcrumb navigation path from home page through products to Refinishing Wax product page",
+    "name": "Breadcrumb Navigation",
+    "description": "Navigation path showing the location of Refinishing Wax within the Garner and Tow website hierarchy",
     "itemListElement": [
       {
         "@type": "ListItem",
@@ -565,7 +593,7 @@
     "description": "When using your Garner and Tow bags, the wax may wear off over time. Therefore, we recommend reapplying a fabric wax designed specifically for waxed materials to restore its water resistance. TexWax™ Refinishing Wax is a special formula that requires minimal heat, comes in a convenient 1.5-oz tin, and will keep your bags looking fresh and new!",
     "image": "https://garnerandtow.com/cdn/shop/files/PDPTexWax-PDP_02.jpg?v=1739159922",
     "url": "https://garnerandtow.com/products/refinishing-wax",
-    "sku": "43003237204107",
+    "sku": "7616986644619",
     "brand": {
       "@type": "Brand",
       "name": "Garner and Tow"
@@ -575,8 +603,7 @@
       "price": "13.00",
       "priceCurrency": "USD",
       "availability": "https://schema.org/OutOfStock",
-      "url": "https://garnerandtow.com/products/refinishing-wax",
-      "priceValidUntil": "2025-12-31"
+      "url": "https://garnerandtow.com/products/refinishing-wax"
     },
     "material": "Paraffin wax",
     "weight": {
@@ -623,30 +650,25 @@
     "name": "Nite Ize S-Biner",
     "description": "The iconic, highly-regarded Nite Ize S-Biner (size #2) allows for quick and easy attachment using its unique double-gated design. The weather-resistant, durable stainless steel body offers a perfect way to hold, secure, and connect everything from keys to water bottles to gear.",
     "image": "https://garnerandtow.com/cdn/shop/files/GarnerandTow_sbiner_PDP_2dc03937-33e5-4318-b1b8-2d2b6c9baa13.jpg?v=1741237561",
+    "url": "https://garnerandtow.com/products/nite-ize-s-binder-2",
     "sku": "43003238744203",
     "brand": {
       "@type": "Brand",
       "name": "Nite Ize"
     },
     "material": "Stainless steel",
-    "url": "https://garnerandtow.com/products/nite-ize-s-binder-2",
     "offers": {
       "@type": "Offer",
       "url": "https://garnerandtow.com/products/nite-ize-s-binder-2",
       "priceCurrency": "USD",
       "price": "2.99",
       "availability": "https://schema.org/OutOfStock",
-      "priceValidUntil": "2025-12-31",
+      "itemCondition": "https://schema.org/NewCondition",
       "seller": {
         "@type": "Organization",
         "name": "Garner and Tow",
         "url": "https://garnerandtow.com"
       }
-    },
-    "weight": {
-      "@type": "QuantitativeValue",
-      "value": "10",
-      "unitCode": "LBR"
     }
   }
 ]
@@ -692,17 +714,17 @@
       "@type": "Brand",
       "name": "Voile"
     },
-    "material": "UV-Resistant Polyurethane strap with Super Tough Nylon buckle",
-    "url": "https://garnerandtow.com/products/voile-straps-nano-series-9in",
     "offers": {
       "@type": "Offer",
       "url": "https://garnerandtow.com/products/voile-straps-nano-series-9in",
       "priceCurrency": "USD",
       "price": "6.00",
-      "availability": "https://schema.org/SoldOut",
+      "availability": "https://schema.org/OutOfStock",
       "priceValidUntil": "2025-12-31",
       "itemCondition": "https://schema.org/NewCondition"
-    }
+    },
+    "material": "UV-Resistant Polyurethane strap with Super Tough Nylon buckle",
+    "url": "https://garnerandtow.com/products/voile-straps-nano-series-9in"
   }
 ]
 </script>
@@ -724,61 +746,60 @@
     },
     "offers": {
       "@type": "AggregateOffer",
-      "url": "https://garnerandtow.com/products/garner-and-tow-gift-card",
       "priceCurrency": "USD",
       "lowPrice": "10.00",
       "highPrice": "200.00",
       "offerCount": "6",
-      "availability": "https://schema.org/InStock",
       "offers": [
         {
           "@type": "Offer",
           "price": "10.00",
           "priceCurrency": "USD",
           "availability": "https://schema.org/InStock",
-          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card"
+          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card",
+          "priceValidUntil": "2026-12-31"
         },
         {
           "@type": "Offer",
           "price": "25.00",
           "priceCurrency": "USD",
           "availability": "https://schema.org/InStock",
-          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card"
+          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card",
+          "priceValidUntil": "2026-12-31"
         },
         {
           "@type": "Offer",
           "price": "50.00",
           "priceCurrency": "USD",
           "availability": "https://schema.org/InStock",
-          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card"
+          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card",
+          "priceValidUntil": "2026-12-31"
         },
         {
           "@type": "Offer",
           "price": "100.00",
           "priceCurrency": "USD",
           "availability": "https://schema.org/InStock",
-          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card"
+          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card",
+          "priceValidUntil": "2026-12-31"
         },
         {
           "@type": "Offer",
           "price": "150.00",
           "priceCurrency": "USD",
           "availability": "https://schema.org/InStock",
-          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card"
+          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card",
+          "priceValidUntil": "2026-12-31"
         },
         {
           "@type": "Offer",
           "price": "200.00",
           "priceCurrency": "USD",
           "availability": "https://schema.org/InStock",
-          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card"
+          "url": "https://garnerandtow.com/products/garner-and-tow-gift-card",
+          "priceValidUntil": "2026-12-31"
         }
       ]
-    },
-    "aggregateRating": {
-      "@type": "AggregateRating",
-      "ratingValue": "0",
-      "reviewCount": "0"
     }
   },
   {
@@ -819,20 +840,22 @@
     "name": "Waxed Canvas Bike Pannier with Laptop Sleeve - The Crescent",
     "description": "Shop the Crescent: A durable waxed canvas bike pannier that converts to a crossbody bag. Features a padded laptop sleeve and 3 exterior pockets. Handcrafted in Chicago.",
     "image": "https://garnerandtow.com/cdn/shop/files/Cresent-Black_002_8f8b0806-e63f-4256-b818-0d166785bf61.jpg",
-    "url": "https://garnerandtow.com/products/crescent",
+    "sku": "crescent",
     "brand": {
       "@type": "Brand",
       "name": "Garner and Tow"
     },
     "offers": {
       "@type": "Offer",
-      "price": "275.00",
-      "priceCurrency": "USD",
-      "availability": "https://schema.org/InStock",
       "url": "https://garnerandtow.com/products/crescent",
-      "priceValidUntil": "2025-12-31"
+      "priceCurrency": "USD",
+      "price": "275.00",
+      "availability": "https://schema.org/InStock",
+      "priceValidUntil": "2025-12-31",
+      "itemCondition": "https://schema.org/NewCondition"
     },
-    "material": "Waxed Canvas"
+    "material": "Waxed Canvas",
+    "url": "https://garnerandtow.com/products/crescent"
   },
   {
     "@context": "https://schema.org",
@@ -867,7 +890,7 @@
     "@context": "https://schema.org/",
     "@type": "BreadcrumbList",
     "name": "Breadcrumb Navigation",
-    "description": "Navigation path showing the location of The Crescent product within the Garner and Tow website hierarchy",
+    "description": "Navigation path showing the current page location within the site hierarchy",
     "itemListElement": [
       {
         "@type": "ListItem",
@@ -946,8 +969,8 @@
   {
     "@context": "https://schema.org/",
     "@type": "BreadcrumbList",
-    "name": "Satchel Bag Navigation",
-    "description": "Breadcrumb navigation path from home to the Satchel Bag product page",
+    "name": "Satchel Bag Breadcrumb Navigation",
+    "description": "Navigation path showing the location of the Satchel Bag product within the Garner & Tow website hierarchy",
     "itemListElement": [
       {
         "@type": "ListItem",
@@ -978,10 +1001,10 @@
   {
     "@context": "http://schema.org",
     "@type": "Article",
-    "articleBody": "If you live in the city, your commute is more than just getting from point A to point B—it's part of your daily rhythm. Whether you're biking, walking, riding the train, or mixing all three, the right bag can turn your commute from a juggling act into a seamless, comfortable, and even stylish experience.\nAt Garner and Tow, we design adaptable bags that move with you—literally—transitioning from bike to body with ease. Choosing the right bag starts with thinking about how you commute. A cyclist may need a design that attaches securely to a bike rack or handlebars, yet still feels natural to carry off the bike. Those who walk or rely on public transit often benefit from a shoulder or crossbody style that keeps hands free for coffee, phone scrolling, or holding onto a crowded bus railing. And for those whose route changes from day to day, adaptability is key—a bag that quickly shifts between bike mode and body mode will keep up no matter how the morning unfolds.\nOf course, a bag's size matters just as much as its flexibility. City life calls for something that can hold a laptop, lunch, water bottle, and maybe an extra layer without becoming a bulky burden. The ideal bag strikes a balance between capacity and agility, making it easy to weave through crowded sidewalks or squeeze onto a packed train. That's why our Tow Tote and Garner Bag are designed to carry the day's essentials while keeping a slim, streamlined profile.\nAnother factor that can't be ignored is the weather. Urban skies have a way of shifting from blue to stormy without much warning, so a water-resistant bag with sturdy zippers is your best defense against an unexpected downpour. Protection for your laptop and valuables shouldn't be an afterthought—it's a necessity.\nComfort also plays a starring role. If you're carrying your bag for more than a few blocks, padded straps and balanced weight distribution can make all the difference. For cyclists, that means a secure fit that won't sway or bounce with every turn. The right bag should feel like part of your body, not a weight you're constantly adjusting.\nAnd then, of course, there's style. In the city, you might step off your bike or train straight into a meeting, a coffee date, or dinner with friends. Your bag isn't just a tool—it's part of your outfit. A versatile, timeless design ensures you look polished no matter where the day takes you. This is where Garner and Tow bags truly shine: they work in the office, on the street, and everywhere in between. Function and style shouldn't be a trade-off—you can have both.\nThe best city commuting bag blends adaptability, comfort, and style, supporting your lifestyle instead of slowing you down. If your daily routine involves biking, walking, or catching the train, choosing a bag that moves with you is one of the smartest investments you can make.\nExplore our full collection at garnerandtow.com and find the commuting companion that makes your city days flow\n\nThe Duffel\n\n\nWhen your day calls for more—more to carry, more places to be, more time in motion—the Duffel rises to the occasion. Designed for life on the go, it's just as at home on your daily commute as it is on a weekend escape. Take it from the office to the gym without missing a beat, or load it up with groceries on the way home. And when adventure calls, the Duffel is ready. With room for camping gear and bikepacking essentials, it's built to handle the demands of the trail as easily as the demands of your calendar.\n\n\nExamples:\n\n\n\nAll your work items plus gym clothes and shoes\n\n\nYour weeks groceries \n\n\nWork computer and charger plus your haul from the thrift store or book store errand after work\n\n\nYour sleeping system for camping; the duffel is great for your sleeping bag, pillow, and sleeping pad\n\n\n\n\nThe Tote\n\n\nSome days call for simplicity, and that's where the Tote shines. With a spacious main compartment and five handy exterior pockets, it keeps your essentials organized and within reach. From commuting across town to swinging by the market or heading out for a casual ride, the Tote is built to keep pace with your everyday rhythm—practical, versatile, and always ready to go.\n\n\nExamples:\n\n\n\nAll your work items plus a sweater for the chilly office\n\n\nSnacks, books, camp chairs, and a bottle of wine\n\n\n\n\nThe Sling\n\n\nFor days when you want to travel light, the Sling keeps things simple without sacrificing versatility. It clips neatly to your bike as a frame bag, then transitions effortlessly into a sling you can wear on the go. Compact yet surprisingly roomy, it carries the essentials—your water bottle, notebook, and a few extras—so you're always ready for the ride, the stop, and everything in between.\n\n\nExamples:\n\n\n\n Phone, keys wallet, plus a book, and snacks for the road\n\n\nCamping food for a long weekend\n\n\n\n\nThe Pouch\n\n\nSmall but mighty, the Pouch is built to keep your essentials close at hand. Compact yet surprisingly spacious, it organizes the things you reach for most—your wallet, tools, snacks, or tech accessories—without adding bulk. Clip it onto the Duffel or Tote with S-Hooks when you need extra room, or wear it crossbody with the optional strap for a lightweight bag that moves with you. However you use it, the Pouch proves that the smallest details often make the biggest difference.\n\n\nExample:\n\n\n\nPhone, keys, wallet, mints, sunglasses, chapstick etc.\n\n\nComputer charger, cables, mouse\n\n\nTool kit\n\n\nToiletries \n\n\n\n",
-    "headline": "How to Choose the Right Bag for City Commuting",
     "name": "How to Choose the Right Bag for City Commuting",
+    "headline": "How to Choose the Right Bag for City Commuting",
     "description": "Except",
+    "articleBody": "If you live in the city, your commute is more than just getting from point A to point B—it's part of your daily rhythm. Whether you're biking, walking, riding the train, or mixing all three, the right bag can turn your commute from a juggling act into a seamless, comfortable, and even stylish experience.\nAt Garner and Tow, we design adaptable bags that move with you—literally—transitioning from bike to body with ease. Choosing the right bag starts with thinking about how you commute. A cyclist may need a design that attaches securely to a bike rack or handlebars, yet still feels natural to carry off the bike. Those who walk or rely on public transit often benefit from a shoulder or crossbody style that keeps hands free for coffee, phone scrolling, or holding onto a crowded bus railing. And for those whose route changes from day to day, adaptability is key—a bag that quickly shifts between bike mode and body mode will keep up no matter how the morning unfolds.\nOf course, a bag's size matters just as much as its flexibility. City life calls for something that can hold a laptop, lunch, water bottle, and maybe an extra layer without becoming a bulky burden. The ideal bag strikes a balance between capacity and agility, making it easy to weave through crowded sidewalks or squeeze onto a packed train. That's why our Tow Tote and Garner Bag are designed to carry the day's essentials while keeping a slim, streamlined profile.\nAnother factor that can't be ignored is the weather. Urban skies have a way of shifting from blue to stormy without much warning, so a water-resistant bag with sturdy zippers is your best defense against an unexpected downpour. Protection for your laptop and valuables shouldn't be an afterthought—it's a necessity.\nComfort also plays a starring role. If you're carrying your bag for more than a few blocks, padded straps and balanced weight distribution can make all the difference. For cyclists, that means a secure fit that won't sway or bounce with every turn. The right bag should feel like part of your body, not a weight you're constantly adjusting.\nAnd then, of course, there's style. In the city, you might step off your bike or train straight into a meeting, a coffee date, or dinner with friends. Your bag isn't just a tool—it's part of your outfit. A versatile, timeless design ensures you look polished no matter where the day takes you. This is where Garner and Tow bags truly shine: they work in the office, on the street, and everywhere in between. Function and style shouldn't be a trade-off—you can have both.\nThe best city commuting bag blends adaptability, comfort, and style, supporting your lifestyle instead of slowing you down. If your daily routine involves biking, walking, or catching the train, choosing a bag that moves with you is one of the smartest investments you can make.\nExplore our full collection at garnerandtow.com and find the commuting companion that makes your city days flow\n\nThe Duffel\n\n\nWhen your day calls for more—more to carry, more places to be, more time in motion—the Duffel rises to the occasion. Designed for life on the go, it's just as at home on your daily commute as it is on a weekend escape. Take it from the office to the gym without missing a beat, or load it up with groceries on the way home. And when adventure calls, the Duffel is ready. With room for camping gear and bikepacking essentials, it's built to handle the demands of the trail as easily as the demands of your calendar.\n\n\nExamples:\n\n\n\nAll your work items plus gym clothes and shoes\n\n\nYour weeks groceries \n\n\nWork computer and charger plus your haul from the thrift store or book store errand after work\n\n\nYour sleeping system for camping; the duffel is great for your sleeping bag, pillow, and sleeping pad\n\n\n\n\nThe Tote\n\n\nSome days call for simplicity, and that's where the Tote shines. With a spacious main compartment and five handy exterior pockets, it keeps your essentials organized and within reach. From commuting across town to swinging by the market or heading out for a casual ride, the Tote is built to keep pace with your everyday rhythm—practical, versatile, and always ready to go.\n\n\nExamples:\n\n\n\nAll your work items plus a sweater for the chilly office\n\n\nSnacks, books, camp chairs, and a bottle of wine\n\n\n\n\nThe Sling\n\n\nFor days when you want to travel light, the Sling keeps things simple without sacrificing versatility. It clips neatly to your bike as a frame bag, then transitions effortlessly into a sling you can wear on the go. Compact yet surprisingly roomy, it carries the essentials—your water bottle, notebook, and a few extras—so you're always ready for the ride, the stop, and everything in between.\n\n\nExamples:\n\n\n\n Phone, keys wallet, plus a book, and snacks for the road\n\n\nCamping food for a long weekend\n\n\n\n\nThe Pouch\n\n\nSmall but mighty, the Pouch is built to keep your essentials close at hand. Compact yet surprisingly spacious, it organizes the things you reach for most—your wallet, tools, snacks, or tech accessories—without adding bulk. Clip it onto the Duffel or Tote with S-Hooks when you need extra room, or wear it crossbody with the optional strap for a lightweight bag that moves with you. However you use it, the Pouch proves that the smallest details often make the biggest difference.\n\n\nExample:\n\n\n\nPhone, keys, wallet, mints, sunglasses, chapstick etc.\n\n\nComputer charger, cables, mouse\n\n\nTool kit\n\n\nToiletries \n\n\n\n",
     "image": "https://garnerandtow.com/cdn/shop/articles/Tote_Blog_Post_August_1296x.jpg?v=1756154489",
     "datePublished": "2025-08-25T12:16:15Z",
     "dateModified": "2025-08-25T12:16:15Z",
@@ -1093,8 +1116,8 @@
       "url": "https://garnerandtow.com",
       "logo": "https://garnerandtow.com/cdn/shop/files/GT_logo_primary_pos_100x.png?v=1740692443"
     },
-    "url": "https://garnerandtow.com/blogs/press/gifting-for-the-cyclist-in-your-life-why-our-bags-work",
-    "articleBody": "Finding the perfect gift for a cyclist can feel tricky. They're particular about their gear, already own the basics, and value function just as much as style. The good news? The right bike bag isn't just an accessory — it's something they'll use every single day. If you're searching for gifts for cyclists, bike accessories gifts, or thoughtful urban cycling gifts, you're in the right place. At Garner and Tow, we design adaptable bike bags made for real life on and off the bike — and that's what makes them such an easy, meaningful gift."
+    "articleBody": "Finding the perfect gift for a cyclist can feel tricky. They're particular about their gear, already own the basics, and value function just as much as style. The good news? The right bike bag isn't just an accessory — it's something they'll use every single day. If you're searching for gifts for cyclists, bike accessories gifts, or thoughtful urban cycling gifts, you're in the right place. At Garner and Tow, we design adaptable bike bags made for real life on and off the bike — and that's what makes them such an easy, meaningful gift.",
+    "url": "https://garnerandtow.com/blogs/press/gifting-for-the-cyclist-in-your-life-why-our-bags-work"
   },
   {
     "@context": "https://schema.org",
@@ -1106,7 +1129,7 @@
         "@type": "ListItem",
         "position": 1,
         "name": "Home",
-        "item": "https://garnerandtow.com/"
+        "item": "https://garnerandtow.com"
       },
       {
         "@type": "ListItem",
@@ -1133,7 +1156,7 @@
     "@type": "Article",
     "name": "Handlebar Bag vs. Rear Rack Bag: Which Setup Is Right for You?",
     "headline": "Handlebar Bag vs. Rear Rack Bag: Which Setup Is Right for You?",
-    "description": "Compare handlebar bags and rear rack bags for bike commuting. Learn which setup works best for your riding style, daily carry needs, and commute distance.",
+    "description": "Compare handlebar bags and rear rack bags for bike commuting. Learn which setup offers better weight distribution, accessibility, and convenience for your daily riding style.",
     "articleBody": "If you commute, run errands, or ride daily, your bike bag setup shapes how your ride feels. Weight distribution, accessibility, and how the bag transitions off the bike all play a role in choosing the right system.\nTwo of the most popular options are handlebar bags and rear rack bags (panniers). Both solve the same problem—carrying your daily essentials—but they do it in very different ways.\nThis guide breaks down the pros, tradeoffs, and best use cases so you can choose the right setup for your riding style.\n \n\n \nWhy Bike Bag Placement Matters\nWhere your bag sits on the bike changes:\n\n\nHow your bike handles\n\n\nHow quickly you can access your gear\n\n\nHow comfortable the bag is off the bike\n\n\nHow much weight you can carry\n\n\nThere isn't a universal \"best\" option—only the best option for how you ride.\n \n\n \nHandlebar Bag: Quick Access + Everyday Convenience\nA handlebar bag mounts to the front of your bike and keeps your essentials within arm's reach while riding.\nThink of it as the bike equivalent of a daily carry bag.\nBest for:\n\n\nShort to medium commutes\n\n\nCoffee runs and errands\n\n\nMinimal everyday carry\n\n\nRiders without a rear rack\n\n\nPros of a Handlebar Bag\n1. Fast Access While Riding\nPhone, wallet, snacks, keys—everything is visible and reachable without stopping. This is the biggest reason many daily riders prefer a handlebar setup.\n2. Simpler Bike Setup\nNo rack required. Mounting is quick and minimal, making it ideal for road bikes, gravel bikes, or minimalist commuters.\n3. Easy Transition Off the Bike\nHandlebar bags typically convert easily into crossbody or shoulder bags, making them perfect for stop-and-go city riding.\n4. Great for Light Loads\nPerfect capacity for daily essentials without encouraging overpacking.\nTradeoffs of Handlebar Bags\n\n\nLimited capacity compared to rear rack bags\n\n\nHeavy loads can affect steering feel\n\n\nNot ideal for laptops + large gear loads\n\n\n \n\n \nRear Rack Bag (Pannier): Stability + Carrying Capacity\nA rear rack bag commuter setup moves the weight behind the rider, creating a more stable ride—especially when carrying heavier items.\nIf your bike bag needs to function like a mobile office or grocery hauler, this is where rear rack bags shine.\nBest for:\n\n\nLonger commutes\n\n\nCarrying laptops or work gear\n\n\nGrocery runs and errands\n\n\nHeavier daily loads\n\n\nPros of Rear Rack Bags\n1. Better Weight Distribution\nPlacing weight over the rear wheel keeps steering light and predictable. This matters most when carrying heavier loads.\n2. More Storage Capacity\nRear rack bags typically hold significantly more than handlebar bags—ideal for laptops, lunch, clothing layers, or groceries.\n3. Comfortable for Longer Rides\nBecause the weight sits low and centered, the bike feels balanced even when fully loaded.\n4. Ideal for Daily Commuters\nThis setup is popular among year-round riders who carry work gear regularly.\nTradeoffs of Rear Rack Bags\n\n\nRequires installing a rack\n\n\nGear is less accessible while riding\n\n\nCan feel oversized for quick trips\n\n\n \n\n \nWhich Setup Is Right for Your Commute?\nChoose a handlebar bag if:\nYou carry essentials, make frequent stops, and want the fastest on/off bike transition.\nThis setup excels for riders who treat their bike like a daily mobility tool.\nChoose a rear rack bag if:\nYour bike carries your workday. Laptop, lunch, layers, groceries—this setup handles heavier loads comfortably.\n \n\n \nThe Flexible Middle Ground\nMany riders eventually use both positions depending on the ride.\nA versatile system lets you:\n\n\nMount up front for quick errands\n\n\nMove to the rear rack for heavier commutes\n\n\nWear the same bag off the bike\n\n\nThis flexibility is what makes adaptable bike bags especially useful for everyday riders.\n \n\n \nFinal Thoughts: Match the Bag to the Ride\nThe best bike bag mounting option is the one that matches your daily routine.\n\n\nQuick rides → Handlebar bag\n\n\nHeavy commuting → Rear rack bag\n\n\nMixed riding → Versatile mounting options\n\n\nChoosing the right setup isn't about carrying more—it's about carrying smarter.\n ",
     "image": "https://garnerandtow.com/cdn/shop/articles/IMG_2704_900x.jpg?v=1777559100",
     "datePublished": "2026-04-30T09:24:57Z",
@@ -1176,7 +1199,7 @@
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     "name": "Breadcrumb Navigation",
-    "description": "Navigation path showing the hierarchy from Home through Press to the article about handlebar bags versus rear rack bags for bicycle touring and bikepacking.",
+    "description": "Navigation path showing the hierarchy from Home through Press to the article about handlebar bags versus rear rack bags for bicycle touring and commuting.",
     "itemListElement": [
       {
         "@type": "ListItem",
@@ -1209,7 +1232,7 @@
     "@type": "Article",
     "name": "What to Pack in Your Bike Commuter Bag (And How to Organize It)",
     "headline": "What to Pack in Your Bike Commuter Bag (And How to Organize It)",
-    "description": "A comprehensive guide to building the perfect bike commuter bag packing list and organizing it for work commutes, errands, and weekend rides. Learn what essentials to carry and how to create an efficient organization system.",
+    "description": "A comprehensive guide to building the perfect bike commuter bag packing list and organizing it for different types of rides, from work commutes to weekend adventures.",
     "articleBody": "Whether you're riding across town to work, running errands after a coffee stop, or heading out for a weekend adventure, having a well-organized bike commuter bag can make every ride smoother. The right gear helps you stay prepared without overpacking, and a thoughtful organization system means you can find what you need when you need it.\nHere's our guide to building the perfect bike commuter bag packing list and organizing it for different types of rides.\nThe Essentials: What to Carry on Your Bike Commute\nNo matter where you're headed, a few items belong in every commuter setup:\n\n\nWallet or card holder\n\n\nKeys\n\n\nPhone\n\n\nWater bottle\n\n\nBike lock\n\n\nMini bike tool or multi-tool\n\n\nSpare tube or flat repair kit\n\n\nCompact hand pump or CO₂ inflator\n\n\nSunglasses\n\n\nLightweight layer or rain jacket\n\n\nChapstick\n\n\nSnacks\n\n\nThese essentials cover most daily rides and help you handle common situations without carrying unnecessary weight.\nScenario 1: The Work Day Commute\nFor riders heading to the office, organization is key. You need easy access to daily essentials while keeping work items protected and separate.\nPacked in the Crescent\nThe Crescent's larger capacity makes it ideal for carrying work gear while keeping everything secure on the bike.\nWhat to pack:\n\n\nLaptop or tablet\n\n\nNotebook\n\n\nChargers and cables\n\n\nWater bottle\n\n\nLunch\n\n\nLight jacket\n\n\nWallet, keys, and phone\n\n\nFlat repair kit\n\n\nOrganization Tips\nUse smaller pouches to group similar items together:\n\n\nElectronics in one pouch\n\n\nBike repair essentials in another\n\n\nPersonal items in a dedicated pocket\n\n\nThis prevents your bag from becoming a catch-all and makes it easy to grab what you need once you arrive at work.\nScenario 2: The Everyday Errand Run\nSometimes you don't need to carry your entire day with you. For quick trips around town, a lighter setup is often the most convenient.\nPacked in the Satchel\nThe Satchel is perfect for carrying everyday essentials while staying compact and comfortable off the bike.\nWhat to pack:\n\n\nWallet\n\n\nPhone\n\n\nKeys\n\n\nSunglasses\n\n\nReusable shopping bag\n\n\nWater bottle\n\n\nSmall snack\n\n\nCompact lock\n\n\nThe streamlined size encourages you to bring only what you need while still leaving room for a few unexpected purchases.\nOrganization Tips\nPlace frequently used items—phone, wallet, and keys—in the front pocket. Reserve the main compartment for bulkier items like a reusable shopping bag or light layer.\nScenario 3: The Weekend Ride\nWeekend rides often blend transportation and adventure. You may stop for coffee, visit a market, meet friends, or explore a new neighborhood.\nCrescent + Satchel Setup\nCombining both bags gives you flexibility throughout the day.\nWhat to pack in the Satchel:\n\n\nExtra layer\n\n\nWater bottle\n\n\nSnacks\n\n\nCamera\n\n\nFlat repair kit\n\n\nLightweight rain shell\n\n\nWhat to pack in the Crescent:\n\n\nPhone\n\n\nWallet\n\n\nKeys\n\n\nSmall personal items\n\n\nThis setup keeps valuables close while allowing larger items to stay mounted on the bike.\nCommuter Bag Organization Tips\n1. Create Zones\nThink of your bag as having dedicated areas:\n\n\nDaily essentials\n\n\nWork gear\n\n\nBike tools\n\n\nFood and hydration\n\n\nWhen every item has a home, you spend less time digging through your bag.\n2. Use Pouches\nSmall organizers help prevent loose items from collecting at the bottom of your bag. They're especially useful for cables, tools, and personal care items.\n3. Pack by Frequency\nItems you use constantly should be easiest to reach. Things you rarely need can stay deeper in the bag.\n4. Review Your Setup Regularly\nIf you've been carrying something for months without using it, consider removing it. A lighter bag makes every ride more enjoyable.\n5. Prepare for Weather\nA compact rain jacket or extra layer can make a huge difference. Weather can change quickly, especially during spring and fall commuting seasons.\nBuild a System That Works for You\nThe best bike commuter bag packing list is the one that supports your daily routine. Some riders prioritize carrying work gear, while others focus on flexibility for errands and social rides. The key is creating an organization system that makes your essentials easy to access and keeps unnecessary clutter out.\nWhether you're packing the Crescent for a quick trip across town or loading up the Satchel for a full workday, thoughtful organization can make every ride more comfortable, efficient, and enjoyable.\n ",
     "image": "https://garnerandtow.com/cdn/shop/articles/Cresent-Brown_016_900x.jpg?v=1780425404",
     "datePublished": "2026-06-02T13:33:05Z",
@@ -1252,7 +1275,7 @@
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     "name": "Breadcrumb Navigation",
-    "description": "Navigation path showing the current page location within the Garner & Tow website hierarchy",
+    "description": "Navigation path showing the hierarchy from homepage through Press to the article about what to pack in your bike commuter bag and how to organize it",
     "itemListElement": [
       {
         "@type": "ListItem",
@@ -1367,7 +1390,7 @@
     "@context": "https://schema.org",
     "@type": "Organization",
     "name": "Garner and Tow",
-    "url": "https://garnerandtow.com",
+    "url": "https://garnerandtow.com/",
     "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png",
     "description": "Made from waxed cotton canvas, these timeless bags are made for all your journeys on and off the bike. They are adaptable, modular and made locally in Chicago.",
     "sameAs": [
@@ -1379,7 +1402,7 @@
     "@context": "https://schema.org",
     "@type": "WebSite",
     "name": "Garner and Tow",
-    "url": "https://garnerandtow.com",
+    "url": "https://garnerandtow.com/",
     "description": "Made from waxed cotton canvas, these timeless bags are made for all your journeys on and off the bike. They are adaptable, modular and made locally in Chicago.",
     "potentialAction": {
       "@type": "SearchAction",
@@ -1411,42 +1434,36 @@
         {
           "@type": "ListItem",
           "position": 1,
-          "url": "https://garnerandtow.com/products/tote",
           "name": "Tote",
           "item": "https://garnerandtow.com/products/tote"
         },
         {
           "@type": "ListItem",
           "position": 2,
-          "url": "https://garnerandtow.com/products/duffel",
           "name": "Duffel",
           "item": "https://garnerandtow.com/products/duffel"
         },
         {
           "@type": "ListItem",
           "position": 3,
-          "url": "https://garnerandtow.com/products/sling",
           "name": "Sling",
           "item": "https://garnerandtow.com/products/sling"
         },
         {
           "@type": "ListItem",
           "position": 4,
-          "url": "https://garnerandtow.com/products/pouch",
           "name": "Pouch",
           "item": "https://garnerandtow.com/products/pouch"
         },
         {
           "@type": "ListItem",
           "position": 5,
-          "url": "https://garnerandtow.com/products/satchel-bag",
-          "name": "Satchel",
+          "name": "Satchel Bag",
           "item": "https://garnerandtow.com/products/satchel-bag"
         },
         {
           "@type": "ListItem",
           "position": 6,
-          "url": "https://garnerandtow.com/products/crescent",
           "name": "Crescent",
           "item": "https://garnerandtow.com/products/crescent"
         }
@@ -1512,38 +1529,7 @@
     "name": "Add-ons",
     "description": "To enhance the functionality of your bags and keep them looking new, we offer some handpicked accessories. From an on-the-go shoulder strap to water-resistant refinishing wax, this is where you'll find your extra essentials.",
     "url": "https://garnerandtow.com/collections/add-ons",
-    "image": "https://garnerandtow.com/cdn/shop/files/AllBags-01.jpg?v=1740283591",
-    "mainEntity": {
-      "@type": "ItemList",
-      "name": "Add-ons",
-      "numberOfItems": 4,
-      "itemListElement": [
-        {
-          "@type": "ListItem",
-          "position": 1,
-          "name": "Shoulder Strap",
-          "item": "https://garnerandtow.com/products/shoulder-strap"
-        },
-        {
-          "@type": "ListItem",
-          "position": 2,
-          "name": "Voile Straps Nano Series 9in",
-          "item": "https://garnerandtow.com/products/voile-straps-nano-series-9in"
-        },
-        {
-          "@type": "ListItem",
-          "position": 3,
-          "name": "Nite Ize S-Biner #2",
-          "item": "https://garnerandtow.com/products/nite-ize-s-biner-2"
-        },
-        {
-          "@type": "ListItem",
-          "position": 4,
-          "name": "Refinishing Wax",
-          "item": "https://garnerandtow.com/products/refinishing-wax"
-        }
-      ]
-    }
+    "image": "https://garnerandtow.com/cdn/shop/files/AllBags-01.jpg?v=1740283591"
   },
   {
     "@context": "https://schema.org",
@@ -1567,10 +1553,55 @@
   },
   {
     "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Add-ons Products",
+    "description": "Collection of bag accessories and add-ons",
+    "numberOfItems": 4,
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Shoulder Strap",
+        "item": "https://garnerandtow.com/products/shoulder-strap"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Voile Straps Nano Series 9in",
+        "item": "https://garnerandtow.com/products/voile-straps-nano-series-9in"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Nite Ize S-Biner #2",
+        "item": "https://garnerandtow.com/products/nite-ize-s-biner-2"
+      },
+      {
+        "@type": "ListItem",
+        "position": 4,
+        "name": "Refinishing Wax",
+        "item": "https://garnerandtow.com/products/refinishing-wax"
+      }
+    ]
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Garner and Tow",
+    "url": "https://garnerandtow.com",
+    "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png?v=1752679410",
+    "description": "Premium bag accessories and add-ons to enhance functionality and maintain quality",
+    "sameAs": [
+      "https://www.facebook.com/garnerandtow",
+      "https://www.instagram.com/garnerandtow/"
+    ]
+  },
+  {
+    "@context": "https://schema.org",
     "@type": "WebSite",
     "name": "Garner and Tow",
-    "url": "https://garnerandtow.com/",
-    "description": "Premium bags and accessories with handpicked add-ons to enhance functionality and maintain quality.",
+    "url": "https://garnerandtow.com",
+    "description": "Premium bags and accessories",
     "potentialAction": {
       "@type": "SearchAction",
       "target": {
@@ -1579,50 +1610,6 @@
       },
       "query-input": "required name=search_term_string"
     }
-  },
-  {
-    "@context": "https://schema.org",
-    "@type": "Organization",
-    "name": "Garner and Tow",
-    "url": "https://garnerandtow.com/",
-    "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png?v=1752679410",
-    "description": "Garner and Tow offers premium bags and carefully curated accessories designed to enhance functionality and keep your gear looking new.",
-    "sameAs": [
-      "https://www.facebook.com/garnerandtow",
-      "https://www.instagram.com/garnerandtow/"
-    ]
-  }
-]
-</script>
-{%- endif -%}
-{%- if template contains 'page' and page.handle == 'contact' -%}
-<script type="application/ld+json">
-[
-  {
-    "@context": "https://schema.org",
-    "@type": "ContactPage",
-    "name": "Contact - Garner and Tow",
-    "description": "Contact Garner and Tow for inquiries about our adaptable bike bags made from waxed cotton canvas. Use our contact form to get in touch with our team.",
-    "url": "https://garnerandtow.com/pages/contact"
-  },
-  {
-    "@context": "https://schema.org",
-    "@type": "WebPage",
-    "name": "Contact - Garner and Tow",
-    "description": "Contact Garner and Tow for inquiries about our adaptable bike bags made from waxed cotton canvas. Perfect for day to night activities, you can take them to the office, happy hour, and beyond.",
-    "url": "https://garnerandtow.com/pages/contact"
-  },
-  {
-    "@context": "https://schema.org",
-    "@type": "Organization",
-    "name": "Garner and Tow",
-    "url": "https://garnerandtow.com",
-    "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png?v=1752679410",
-    "description": "Garner and Tow makes adaptable bike bags from waxed cotton canvas that go wherever your day takes you. Perfect for day to night activities, you can take them to the office, happy hour, and beyond.",
-    "sameAs": [
-      "https://www.facebook.com/garnerandtow",
-      "https://www.instagram.com/garnerandtow/"
-    ]
   }
 ]
 </script>
@@ -1635,13 +1622,14 @@
     "@type": "WebPage",
     "name": "Fabric Care",
     "description": "Learn how to care for your Garner and Tow waxed canvas bags. Includes general care instructions, cleaning tips, and re-waxing guidance to maintain water resistance and durability.",
-    "url": "https://garnerandtow.com/pages/fabric-care"
+    "url": "https://garnerandtow.com/pages/fabric-care",
+    "image": "https://garnerandtow.com/cdn/shop/files/20250325_GarnerAndTow_006.jpg"
   },
   {
     "@context": "https://schema.org",
     "@type": "HowTo",
     "name": "How to Care for Waxed Canvas Bags",
-    "description": "Complete guide to caring for your Garner and Tow waxed canvas bags, including cleaning, maintenance, and re-waxing instructions to preserve water resistance and durability.",
+    "description": "Complete guide to caring for your Garner and Tow waxed canvas bags, including cleaning, maintenance, and re-waxing instructions to preserve water resistance.",
     "image": "https://garnerandtow.com/cdn/shop/files/20250325_GarnerAndTow_167.jpg",
     "totalTime": "PT30M",
     "step": [
@@ -1673,7 +1661,7 @@
           {
             "@type": "HowToStep",
             "name": "Apply wax",
-            "text": "Rub in wax evenly onto the fabric with a cloth. Use a fabric wax designed for waxed materials."
+            "text": "Rub in wax evenly onto the fabric with a cloth using a fabric wax designed for waxed materials."
           },
           {
             "@type": "HowToStep",
@@ -1727,7 +1715,7 @@
     "name": "Garner and Tow",
     "url": "https://garnerandtow.com",
     "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png",
-    "description": "Garner and Tow creates durable waxed canvas bags designed for longevity and water resistance.",
+    "description": "Garner and Tow specializes in durable waxed canvas bags and accessories designed for longevity and style.",
     "sameAs": [
       "https://www.facebook.com/garnerandtow",
       "https://www.instagram.com/garnerandtow/"
@@ -1762,21 +1750,21 @@
   {
     "@context": "https://schema.org",
     "@type": "WebPage",
-    "name": "Core Essentials line",
+    "name": "Core Essentials Line",
     "description": "Introducing the Core Essentials line: The Duffel, Tote, Sling and Pouch. Made from waxed cotton canvas, these timeless bags are made for all your journeys on and off the bike. They are adaptable, modular and made locally in Chicago.",
     "url": "https://garnerandtow.com/pages/catalog",
-    "image": "https://garnerandtow.com/cdn/shop/files/AllBags-01.jpg"
+    "image": "https://garnerandtow.com/cdn/shop/files/AllBags-01.jpg?v=1740283591"
   },
   {
     "@context": "https://schema.org",
     "@type": "CollectionPage",
-    "name": "Core Essentials line",
+    "name": "Core Essentials Line",
     "description": "Introducing the Core Essentials line: The Duffel, Tote, Sling and Pouch. Made from waxed cotton canvas, these timeless bags are made for all your journeys on and off the bike. They are adaptable, modular and made locally in Chicago.",
     "url": "https://garnerandtow.com/pages/catalog",
-    "image": "https://garnerandtow.com/cdn/shop/files/AllBags-01.jpg",
+    "image": "https://garnerandtow.com/cdn/shop/files/AllBags-01.jpg?v=1740283591",
     "mainEntity": {
       "@type": "ItemList",
-      "name": "Core Essentials Product Line",
+      "name": "Core Essentials Products",
       "numberOfItems": 4,
       "itemListElement": [
         {
@@ -1808,11 +1796,31 @@
   },
   {
     "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "name": "Core Essentials Line Breadcrumb",
+    "description": "Navigation path showing the location of the Core Essentials Line catalog page within the Garner & Tow website hierarchy",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://garnerandtow.com"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Core Essentials Line",
+        "item": "https://garnerandtow.com/pages/catalog"
+      }
+    ]
+  },
+  {
+    "@context": "https://schema.org",
     "@type": "Organization",
     "name": "Garner and Tow",
     "url": "https://garnerandtow.com",
-    "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png",
-    "description": "Garner and Tow creates timeless waxed cotton canvas bags made locally in Chicago for all your journeys on and off the bike.",
+    "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png?v=1752679410",
+    "description": "Garner and Tow creates timeless bags made from waxed cotton canvas for all your journeys on and off the bike. Adaptable, modular bags made locally in Chicago.",
     "sameAs": [
       "https://www.facebook.com/garnerandtow",
       "https://www.instagram.com/garnerandtow/"
@@ -1823,7 +1831,7 @@
     "@type": "WebSite",
     "name": "Garner and Tow",
     "url": "https://garnerandtow.com",
-    "description": "Timeless waxed cotton canvas bags made locally in Chicago for all your journeys on and off the bike.",
+    "description": "Timeless bags made from waxed cotton canvas for all your journeys on and off the bike. Made locally in Chicago.",
     "potentialAction": {
       "@type": "SearchAction",
       "target": {
@@ -1832,39 +1840,6 @@
       },
       "query-input": "required name=search_term_string"
     }
-  },
-  {
-    "@context": "https://schema.org",
-    "@type": "ItemList",
-    "name": "Add-ons",
-    "description": "Accessories and add-ons to complement your Garner and Tow bags",
-    "numberOfItems": 4,
-    "itemListElement": [
-      {
-        "@type": "ListItem",
-        "position": 1,
-        "name": "Shoulder Strap",
-        "item": "https://garnerandtow.com/products/shoulder-strap"
-      },
-      {
-        "@type": "ListItem",
-        "position": 2,
-        "name": "Voile Straps Nano Series 9in",
-        "item": "https://garnerandtow.com/products/voile-straps-nano-series-9in"
-      },
-      {
-        "@type": "ListItem",
-        "position": 3,
-        "name": "Nite Ize S-Biner #2",
-        "item": "https://garnerandtow.com/products/nite-ize-s-biner-2"
-      },
-      {
-        "@type": "ListItem",
-        "position": 4,
-        "name": "Refinishing Wax",
-        "item": "https://garnerandtow.com/products/refinishing-wax"
-      }
-    ]
   }
 ]
 </script>
@@ -1876,7 +1851,7 @@
     "@context": "https://schema.org",
     "@type": "WebPage",
     "name": "Press",
-    "description": "Garner and Tow makes adaptable bike bags from waxed cotton canvas that go wherever your day takes you. Perfect for day to night activities, you can take them to the office, happy hour, and beyond. View our press coverage, reviews, and upcoming events.",
+    "description": "Garner and Tow makes adaptable bike bags from waxed cotton canvas that go wherever your day takes you. Perfect for day to night activities, you can take them to the office, happy hour, and beyond. View our press coverage, product reviews, and upcoming events.",
     "url": "https://garnerandtow.com/pages/press",
     "image": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png?v=1752679410"
   },
@@ -1895,7 +1870,7 @@
   {
     "@context": "https://schema.org",
     "@type": "ItemList",
-    "name": "Garner and Tow Press Coverage and Events",
+    "name": "Press Coverage and Events",
     "description": "Press mentions, product reviews, and upcoming events featuring Garner and Tow bike bags",
     "numberOfItems": 9,
     "itemListElement": [
@@ -1927,7 +1902,7 @@
         "@type": "ListItem",
         "position": 5,
         "name": "Out Our Front Door: Hootenanny",
-        "item": "https://garnerandtow.com/pages/press"
+        "item": "https://garnerandtow.com/pages/press#hootenanny"
       },
       {
         "@type": "ListItem",
@@ -1959,7 +1934,7 @@
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     "name": "Press Page Breadcrumb",
-    "description": "Navigation breadcrumb trail showing the path from the homepage to the Press page",
+    "description": "Navigation breadcrumb trail showing the path from the homepage to the Press page on Garner and Tow",
     "itemListElement": [
       {
         "@type": "ListItem",
@@ -1985,35 +1960,15 @@
     "@context": "https://schema.org",
     "@type": "WebPage",
     "name": "Wholesale Sign Up",
-    "description": "Create a wholesale account with Garner and Tow to access wholesale pricing on adaptable bike bags made from waxed cotton canvas. Register your business to become a wholesale partner.",
+    "description": "Create a wholesale account with Garner and Tow. Sign up to access wholesale pricing on adaptable bike bags made from waxed cotton canvas.",
     "url": "https://garnerandtow.com/pages/wholesale-sign-up"
-  },
-  {
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    "name": "Wholesale Sign Up Breadcrumb",
-    "description": "Navigation path to the Wholesale Sign Up page on Garner & Tow",
-    "itemListElement": [
-      {
-        "@type": "ListItem",
-        "position": 1,
-        "name": "Home",
-        "item": "https://garnerandtow.com"
-      },
-      {
-        "@type": "ListItem",
-        "position": 2,
-        "name": "Wholesale Sign Up",
-        "item": "https://garnerandtow.com/pages/wholesale-sign-up"
-      }
-    ]
   },
   {
     "@context": "https://schema.org",
     "@type": "Organization",
     "name": "Garner and Tow",
     "url": "https://garnerandtow.com",
-    "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png",
+    "logo": "https://garnerandtow.com/cdn/shop/files/Garner_and_Tow_Logo.png?v=1752679410",
     "description": "Garner and Tow makes adaptable bike bags from waxed cotton canvas that go wherever your day takes you. Perfect for day to night activities, you can take them to the office, happy hour, and beyond.",
     "sameAs": [
       "https://www.facebook.com/garnerandtow",
@@ -2025,7 +1980,7 @@
     "@type": "WebSite",
     "name": "Garner and Tow",
     "url": "https://garnerandtow.com",
-    "description": "Adaptable bike bags from waxed cotton canvas for day to night activities",
+    "description": "Garner and Tow makes adaptable bike bags from waxed cotton canvas that go wherever your day takes you. Perfect for day to night activities, you can take them to the office, happy hour, and beyond.",
     "potentialAction": {
       "@type": "SearchAction",
       "target": {
@@ -2045,7 +2000,7 @@
     "@context": "https://schema.org",
     "@type": "WebPage",
     "name": "Quickbuy - Wholesale Account Registration",
-    "description": "Create a wholesale account with Garner and Tow to access bulk ordering for our adaptable bike bags made from waxed cotton canvas. Perfect for retailers and business customers.",
+    "description": "Create a wholesale account with Garner and Tow to access special pricing and ordering options for bike bags made from waxed cotton canvas.",
     "url": "https://garnerandtow.com/pages/quickbuy"
   },
   {
@@ -2059,13 +2014,6 @@
       "https://www.facebook.com/garnerandtow",
       "https://www.instagram.com/garnerandtow/"
     ]
-  },
-  {
-    "@context": "https://schema.org",
-    "@type": "ContactPage",
-    "name": "Wholesale Account Registration - Garner and Tow",
-    "description": "Register for a wholesale account to purchase Garner and Tow's adaptable bike bags in bulk. Complete the form with your business information to get started with B2B ordering.",
-    "url": "https://garnerandtow.com/pages/quickbuy"
   },
   {
     "@context": "https://schema.org",

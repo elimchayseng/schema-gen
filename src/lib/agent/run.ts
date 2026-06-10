@@ -9,6 +9,7 @@ import { fetchSitemap } from "@/lib/crawl/sitemap";
 import { fetchPage } from "@/lib/url-validator/fetcher";
 import { createAdminClient } from "@/lib/supabase";
 import { getRichResultInfo } from "@/lib/validation/rich-results";
+import { typeSatisfies } from "@/lib/validation/schema-definitions";
 import { renderSchemaGenSnippet, urlToTemplateTarget } from "@/lib/shopify/snippet";
 import { getShopifyConfig, normalizeShop } from "@/lib/shopify/config";
 import type { SnippetEntry } from "@/lib/shopify/snippet";
@@ -97,8 +98,11 @@ function toPerceived(goal: Goal, url: string, scan: PageResult): PerceivedPage {
   const validSchemas = (scan.validationResults?.schemas ?? []).filter(
     (s) => s.validation.valid
   );
-  const validTypes = new Set(validSchemas.map((s) => s.type));
-  const typesOk = requirements.every((r) => validTypes.has(r.type));
+  // Subtype-aware (an AboutPage satisfies a WebPage requirement) — must agree with
+  // the L1/L2/L4 gates' schemaSatisfiesType so a satisfied page is never re-queued.
+  const typesOk = requirements.every((r) =>
+    validSchemas.some((s) => typeSatisfies(s.type, r.type))
+  );
 
   // rich-results skip path must match the L2 gate exactly: a rich-bar type must
   // be rich-eligible AND every live valid schema of that type must be free of
@@ -106,7 +110,7 @@ function toPerceived(goal: Goal, url: string, scan: PageResult): PerceivedPage {
   const richOk = requirements.every((r) => {
     if (r.outcome !== "rich_results_eligible") return true;
     if (getRichResultInfo(r.type)?.eligible !== true) return false;
-    const ofType = validSchemas.filter((s) => s.type === r.type);
+    const ofType = validSchemas.filter((s) => typeSatisfies(s.type, r.type));
     return (
       ofType.length > 0 && ofType.every((s) => !hasCriticalIssue(s.validation))
     );

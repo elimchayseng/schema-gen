@@ -438,6 +438,9 @@ export function fixSchemaWithContext(
 
   if (context?.pageUrl) {
     applyUrlAutoFill(fixed, context.pageUrl, "$", fixes);
+    // The root url may only exist NOW (auto-filled above), so the nested-Organization
+    // pass inside fixSchema found no document URL on generated schemas — run it again.
+    fixNestedOrganizationUrl(fixed, fixes);
   }
 
   // Re-validate after context fixes

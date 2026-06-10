@@ -9,6 +9,7 @@
  *   L3  regression guard: candidate not worse than the current live schema
  */
 import { validateSchema } from "@/lib/validation/engine";
+import { typeSatisfies } from "@/lib/validation/schema-definitions";
 import {
   getRichResultInfo,
   getSeverityContext,
@@ -29,6 +30,16 @@ export function schemaTypesOf(obj: unknown): string[] {
   const t = (obj as Record<string, unknown>)["@type"];
   if (Array.isArray(t)) return t.map((x) => String(x));
   return t != null ? [String(t)] : [];
+}
+
+/**
+ * Does this schema answer for a required type? Subtype-aware: an AboutPage
+ * satisfies a WebPage requirement (the generator emitting the MORE specific
+ * type is better data, not a failure). Shared by L1/L2 here and L4/dup in
+ * verify.ts so every gate agrees on what "present" means.
+ */
+export function schemaSatisfiesType(obj: unknown, required: string): boolean {
+  return schemaTypesOf(obj).some((t) => typeSatisfies(t, required));
 }
 
 /** True if any error/warning maps to a rich-results-blocking ("critical") impact. */
@@ -102,7 +113,9 @@ export function runGates(input: GateInput): GateResults {
   } else {
     const missing = requireTypes.find(
       (t) =>
-        !candidates.some((_, i) => validations[i].valid && typesOf(i).includes(t))
+        !candidates.some(
+          (c, i) => validations[i].valid && schemaSatisfiesType(c, t)
+        )
     );
     L1 = missing ? fail(`no valid '${missing}' schema on the page`) : pass();
   }
@@ -119,8 +132,8 @@ export function runGates(input: GateInput): GateResults {
           problems.push(`${t} is not rich-result eligible`);
           continue;
         }
-        candidates.forEach((_, i) => {
-          if (!typesOf(i).includes(t)) return;
+        candidates.forEach((c, i) => {
+          if (!schemaSatisfiesType(c, t)) return;
           if (hasCriticalIssue(validations[i])) {
             problems.push(`${t}: a critical issue blocks rich results`);
           }

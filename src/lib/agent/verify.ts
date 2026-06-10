@@ -20,7 +20,7 @@
 import { extractJsonLd } from "@/lib/url-validator/extractor";
 import { validateSchema } from "@/lib/validation/engine";
 import { getRichResultInfo } from "@/lib/validation/rich-results";
-import { hasCriticalIssue, schemaTypesOf } from "./gates";
+import { hasCriticalIssue, schemaSatisfiesType } from "./gates";
 import type { GateResult, MinOutcome, TypeRequirement } from "./types";
 
 const pass = (detail?: string): GateResult => ({ passed: true, detail });
@@ -86,7 +86,7 @@ function verifyHtml(
   const missing = requirements.find(
     (r) =>
       !live.some(
-        (_, i) => validations[i].valid && schemaTypesOf(live[i]).includes(r.type)
+        (_, i) => validations[i].valid && schemaSatisfiesType(live[i], r.type)
       )
   );
   if (missing) {
@@ -100,7 +100,7 @@ function verifyHtml(
   if (unique) {
     for (const r of requirements) {
       const validCount = live.filter(
-        (_, i) => validations[i].valid && schemaTypesOf(live[i]).includes(r.type)
+        (_, i) => validations[i].valid && schemaSatisfiesType(live[i], r.type)
       ).length;
       if (validCount !== 1) {
         return fail(
@@ -109,7 +109,7 @@ function verifyHtml(
       }
       const invalidCount =
         live.filter(
-          (_, i) => !validations[i].valid && schemaTypesOf(live[i]).includes(r.type)
+          (_, i) => !validations[i].valid && schemaSatisfiesType(live[i], r.type)
         ).length +
         unparseable.filter((e) => rawDeclaresType(e.raw, r.type)).length;
       if (invalidCount > 0) {
@@ -130,7 +130,7 @@ function verifyHtml(
     const critical = live.some(
       (_, i) =>
         validations[i].valid &&
-        schemaTypesOf(live[i]).includes(r.type) &&
+        schemaSatisfiesType(live[i], r.type) &&
         hasCriticalIssue(validations[i])
     );
     if (critical) {

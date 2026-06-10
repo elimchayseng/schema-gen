@@ -1042,7 +1042,7 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
   // ------------------------------------------------------------------
   CollectionPage: {
     type: "CollectionPage",
-    extends: "Thing",
+    extends: "WebPage",
     description: "A page that groups related items (e.g. a product collection).",
     properties: [
       {
@@ -1127,7 +1127,7 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
 
   AboutPage: {
     type: "AboutPage",
-    extends: "Thing",
+    extends: "WebPage",
     description: "A web page that provides information about the site or organization.",
     properties: [
       {
@@ -1150,7 +1150,7 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
 
   ContactPage: {
     type: "ContactPage",
-    extends: "Thing",
+    extends: "WebPage",
     description: "A web page with contact information.",
     properties: [
       {
@@ -1171,3 +1171,22 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
     ],
   },
 };
+
+/**
+ * Does a concrete schema type satisfy a required type? True for an exact match
+ * or when the actual type's `extends` chain reaches the required type — e.g. an
+ * AboutPage IS-A WebPage, a BlogPosting IS-A Article. Used by the agent's gates
+ * so a page that emits the more specific (better) type isn't failed for not
+ * carrying the generic one.
+ */
+export function typeSatisfies(actual: string, required: string): boolean {
+  if (actual === required) return true;
+  const seen = new Set<string>([actual]);
+  let cur = schemaDefinitions[actual];
+  while (cur?.extends && !seen.has(cur.extends)) {
+    if (cur.extends === required) return true;
+    seen.add(cur.extends);
+    cur = schemaDefinitions[cur.extends];
+  }
+  return false;
+}

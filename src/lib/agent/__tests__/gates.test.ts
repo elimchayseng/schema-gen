@@ -199,3 +199,53 @@ describe("hasCriticalIssue", () => {
     expect(hasCriticalIssue(vr([], [{ code: "MISSING_RECOMMENDED" }]))).toBe(false);
   });
 });
+
+describe("subtype-aware requirement matching (garnerandtow run-3 failures)", () => {
+  it("a valid AboutPage satisfies a WebPage requirement at L1", () => {
+    const aboutPage = {
+      "@context": "https://schema.org",
+      "@type": "AboutPage",
+      name: "About Garner and Tow",
+      url: "https://garnerandtow.com/pages/about",
+      description: "Our story",
+    };
+    const result = runGates({
+      candidates: [aboutPage],
+      requireTypes: ["WebPage"],
+      minOutcome: "valid",
+      beforeErrorCount: 0,
+      beforeHadSchema: false,
+    });
+    expect(result.L1.passed).toBe(true);
+  });
+
+  it("a BlogPosting satisfies an Article requirement, but not vice versa", () => {
+    const blogPosting = {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: "t",
+      author: { "@type": "Person", name: "a" },
+      datePublished: "2026-01-01",
+    };
+    const ok = runGates({
+      candidates: [blogPosting],
+      requireTypes: ["Article"],
+      minOutcome: "valid",
+      beforeErrorCount: 0,
+      beforeHadSchema: false,
+    });
+    expect(ok.L1.passed).toBe(true);
+
+    // The PARENT type never satisfies a more specific requirement.
+    const article = { ...blogPosting, "@type": "Article" };
+    const notOk = runGates({
+      candidates: [article],
+      requireTypes: ["BlogPosting"],
+      minOutcome: "valid",
+      beforeErrorCount: 0,
+      beforeHadSchema: false,
+    });
+    expect(notOk.L1.passed).toBe(false);
+    expect(notOk.L1.detail).toContain("BlogPosting");
+  });
+});

@@ -434,3 +434,32 @@ describe("fixSchema", () => {
     ).toBeUndefined();
   });
 });
+
+describe("fixSchemaWithContext ordering (garnerandtow run-3 articles)", () => {
+  it("fills publisher.url even when the document url itself is auto-filled", async () => {
+    const { fixSchemaWithContext } = await import("../fixer");
+    // Generated Article with NO url anywhere — exactly what generation produced.
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Article",
+      headline: "Urban cycling in fall",
+      author: { "@type": "Person", name: "G&T" },
+      datePublished: "2026-01-01",
+      publisher: { "@type": "Organization", name: "Garner and Tow" },
+    };
+    const result = fixSchemaWithContext(schema as Record<string, unknown>, {
+      pageUrl: "https://garnerandtow.com/blogs/press/urban-cycling",
+    });
+    const fixed = result.fixed as {
+      url?: string;
+      publisher: { url?: string };
+    };
+    expect(fixed.url).toBe("https://garnerandtow.com/blogs/press/urban-cycling");
+    expect(fixed.publisher.url).toBe("https://garnerandtow.com");
+    expect(
+      result.validationAfter.errors.filter((e) =>
+        e.message.includes("'url' is missing from Organization")
+      )
+    ).toHaveLength(0);
+  });
+});
