@@ -94,7 +94,7 @@ function stripTrailingCommas(text: string): string {
  * Returns null when nothing needed escaping. Callers must only accept the
  * result if it re-parses cleanly AND looks like JSON-LD (see isPlausibleJsonLd).
  */
-function repairUnescapedStringQuotes(text: string): string | null {
+export function repairUnescapedStringQuotes(text: string): string | null {
   type StringCtx = "objectKey" | "objectValue" | "array" | "top";
   const out: string[] = [];
   const stack: ("object" | "array")[] = [];

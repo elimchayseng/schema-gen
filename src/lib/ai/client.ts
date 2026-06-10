@@ -5,6 +5,7 @@ import type { GeneratorResult, LLMMessage } from "./types";
 import type { ValidationIssue } from "@/lib/validation/types";
 import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 import { generationCache, hashContent } from "./cache";
+import { repairUnescapedStringQuotes } from "@/lib/url-validator/extractor";
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -455,14 +456,32 @@ export async function generateSchemas(
     try {
       parsed = JSON.parse(jsonContent);
     } catch (parseErr) {
-      log("error", "LLM response is not valid JSON", {
-        requestId,
-        parseError: parseErr instanceof Error ? parseErr.message : String(parseErr),
-        contentPreview: jsonContent.slice(0, 500),
-        contentTail: jsonContent.slice(-200),
-        contentLength: jsonContent.length,
-      });
-      throw new Error("LLM response is not valid JSON");
+      // The model sometimes echoes page copy containing double quotes straight
+      // into a JSON string value (the garnerandtow about page: `The word "garner"
+      // means…`) — the same defect class as broken theme JSON-LD. Reuse the
+      // extractor's conservative structural repair; the zod schema below still
+      // gates the shape, so an accepted repair can't smuggle in a bad result.
+      const repaired = repairUnescapedStringQuotes(jsonContent);
+      let recovered: unknown = null;
+      if (repaired !== null) {
+        try {
+          recovered = JSON.parse(repaired);
+          log("warn", "Repaired unescaped quotes in LLM response", { requestId });
+        } catch {
+          recovered = null;
+        }
+      }
+      if (recovered === null) {
+        log("error", "LLM response is not valid JSON", {
+          requestId,
+          parseError: parseErr instanceof Error ? parseErr.message : String(parseErr),
+          contentPreview: jsonContent.slice(0, 500),
+          contentTail: jsonContent.slice(-200),
+          contentLength: jsonContent.length,
+        });
+        throw new Error("LLM response is not valid JSON");
+      }
+      parsed = recovered;
     }
 
     const validated = generatorResultSchema.safeParse(parsed);
