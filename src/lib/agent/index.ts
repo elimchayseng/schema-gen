@@ -26,8 +26,19 @@ export {
   recordAction,
   finishRun,
   readControl,
+  saveResolvedUrls,
   setControl,
 } from "./audit";
+export {
+  classifyPageType,
+  requirementsForPage,
+  requirementsForTarget,
+  uniformRequirements,
+  PAGE_TYPE_MATRIX,
+  PAGE_TYPE_PRIORITY,
+  type PageType,
+} from "./page-type-matrix";
+export { enumerateCatalogUrls } from "./catalog";
 export { gatesPassed } from "./types";
 export {
   groupRunPages,
@@ -40,6 +51,7 @@ export type {
   GoalConstraints,
   GoalScope,
   MinOutcome,
+  TypeRequirement,
   GateResult,
   GateResults,
   PerceivedPage,

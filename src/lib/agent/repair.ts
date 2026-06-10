@@ -31,7 +31,7 @@ import {
 import type { RefinementOutput } from "@/lib/ai/client";
 import { runGates, schemaTypesOf } from "./gates";
 import { gatesPassed } from "./types";
-import type { GateResults, MinOutcome } from "./types";
+import type { GateResults, MinOutcome, TypeRequirement } from "./types";
 
 /** The LLM refinement call, injectable so unit tests stay network-free. */
 export type RefineFn = (
@@ -45,6 +45,8 @@ export interface RepairInput {
   candidates: Record<string, unknown>[];
   requireTypes: string[];
   minOutcome: MinOutcome;
+  /** Per-type bars (issue #28); replaces requireTypes/minOutcome when present. */
+  requirements?: TypeRequirement[];
   beforeErrorCount: number;
   beforeHadSchema: boolean;
   /** Max LLM repair rounds. 0 disables the model entirely (sanitize + auto-fix only). */
@@ -118,6 +120,7 @@ function gate(input: RepairInput, candidates: Record<string, unknown>[]): GateRe
     candidates,
     requireTypes: input.requireTypes,
     minOutcome: input.minOutcome,
+    requirements: input.requirements,
     beforeErrorCount: input.beforeErrorCount,
     beforeHadSchema: input.beforeHadSchema,
   });
@@ -134,7 +137,10 @@ export async function repairToGoal(input: RepairInput): Promise<RepairResult> {
   const enhancementNotes: string[] = [];
 
   // 1 + 2. Sanitize, then a free deterministic auto-fix pass over what remains.
-  const candidates = sanitizeCandidates(input.candidates, input.requireTypes).map(
+  // The required NAMES come from the per-type requirements when present.
+  const requiredNames =
+    input.requirements?.map((r) => r.type) ?? input.requireTypes;
+  const candidates = sanitizeCandidates(input.candidates, requiredNames).map(
     (c) => fixSchemaWithContext(c, { pageUrl: input.url }).fixed
   );
 

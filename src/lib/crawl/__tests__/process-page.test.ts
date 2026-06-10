@@ -424,6 +424,100 @@ describe("processPage", () => {
       expect(result.fixedSchemas?.[0]).toEqual(aiRefinedProduct);
     });
 
+    it("requiredTypes: generation runs on an error-free page when a required type is missing, and the new block is ADDED (issue #28)", async () => {
+      // A homepage carrying only a valid WebSite — Organization is required but absent.
+      const website = { "@type": "WebSite", "@context": "https://schema.org", name: "Acme", url: "https://example.com" };
+      const org = { "@type": "Organization", "@context": "https://schema.org", name: "Acme", url: "https://example.com" };
+      const cleanValidation = {
+        valid: true, errors: [], warnings: [],
+        summary: { errorCount: 0, warningCount: 0, schemaType: "WebSite", validationTimeMs: 1 },
+      };
+
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([
+        { raw: "{}", parsed: website, parseError: undefined, position: 0 },
+      ]);
+      mockValidateSchema.mockReturnValue(cleanValidation);
+      mockFixSchema.mockReturnValue({
+        original: website,
+        fixed: website,
+        fixes: [],
+        validationBefore: cleanValidation,
+        validationAfter: cleanValidation,
+      });
+      mockGenerateSchemas.mockResolvedValue({
+        pageType: "homepage",
+        recommendations: [
+          { type: "Organization", priority: 1 as const, rationale: "r", jsonld: org, shopifyInstructions: "s" },
+          // An unsolicited extra type must still be dropped (pre-#28 behavior kept).
+          { type: "Product", priority: 3 as const, rationale: "r", jsonld: { "@type": "Product" }, shopifyInstructions: "s" },
+        ],
+        mergedJsonld: [],
+        notes: [],
+      });
+      mockRefineAll.mockResolvedValue([
+        {
+          type: "Organization", priority: 1 as const, rationale: "r", jsonld: org, shopifyInstructions: "s",
+          validation: { ...cleanValidation, summary: { ...cleanValidation.summary, schemaType: "Organization" } },
+          fixes: [], enhancementNotes: [], refinementPasses: 1,
+        },
+        {
+          type: "Product", priority: 3 as const, rationale: "r", jsonld: { "@type": "Product" }, shopifyInstructions: "s",
+          validation: { ...cleanValidation, summary: { ...cleanValidation.summary, schemaType: "Product" } },
+          fixes: [], enhancementNotes: [], refinementPasses: 1,
+        },
+      ]);
+
+      const result = await processPage("https://example.com/", "optimize", undefined, {
+        requiredTypes: ["Organization", "WebSite"],
+      });
+
+      // The hint reached the generator…
+      expect(mockGenerateSchemas).toHaveBeenCalledWith(
+        expect.any(String),
+        "https://example.com/",
+        ["Organization", "WebSite"]
+      );
+      // …and the missing required type was added; the unsolicited Product was not.
+      const types = result.fixedSchemas?.map((s) => s["@type"]);
+      expect(types).toEqual(["WebSite", "Organization"]);
+    });
+
+    it("requiredTypes already satisfied: an error-free page never triggers generation", async () => {
+      const website = { "@type": "WebSite", "@context": "https://schema.org", name: "Acme", url: "https://example.com" };
+      const cleanValidation = {
+        valid: true, errors: [], warnings: [],
+        summary: { errorCount: 0, warningCount: 0, schemaType: "WebSite", validationTimeMs: 1 },
+      };
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([
+        { raw: "{}", parsed: website, parseError: undefined, position: 0 },
+      ]);
+      mockValidateSchema.mockReturnValue(cleanValidation);
+      mockFixSchema.mockReturnValue({
+        original: website,
+        fixed: website,
+        fixes: [],
+        validationBefore: cleanValidation,
+        validationAfter: cleanValidation,
+      });
+
+      const result = await processPage("https://example.com/", "optimize", undefined, {
+        requiredTypes: ["WebSite"],
+      });
+
+      expect(result.status).toBe("valid");
+      expect(mockGenerateSchemas).not.toHaveBeenCalled();
+    });
+
     it("handles AI generation failure gracefully", async () => {
       mockFetchPage.mockResolvedValue({
         html: "<html></html>",

@@ -44,7 +44,13 @@ const h = vi.hoisted(() => {
 
 vi.mock("@/lib/supabase", () => ({ createAdminClient: h.createAdminClient }));
 
-import { createRun, finishRun, loadCommittedUrls, recordAction } from "../audit";
+import {
+  createRun,
+  finishRun,
+  loadCommittedUrls,
+  recordAction,
+  saveResolvedUrls,
+} from "../audit";
 import type { ActionRecord, Goal } from "../types";
 
 const goal: Goal = {
@@ -117,6 +123,12 @@ describe("audit", () => {
     h.state.selectResult = { data: null, error: { message: "boom" } };
     const committed = await loadCommittedUrls("run-1");
     expect(committed).toEqual(new Set());
+  });
+
+  it("saveResolvedUrls writes the resolved target list onto the run row", async () => {
+    await saveResolvedUrls("run-1", ["/products/a", "/products/b"]);
+    const row = h.state.updates.find((u) => u.table === "agent_runs");
+    expect(row?.payload).toEqual({ resolved_urls: ["/products/a", "/products/b"] });
   });
 
   it("finishRun updates the run row with status + ended_at", async () => {

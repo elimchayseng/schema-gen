@@ -4,14 +4,30 @@
  */
 import type { PageStatus } from "@/lib/crawl/types";
 
-export type GoalScope = "all_products" | "all_pages" | "url_list";
+export type GoalScope = "site" | "all_products" | "all_pages" | "url_list";
 export type MinOutcome = "valid" | "rich_results_eligible";
+
+/**
+ * One schema type a page must carry, with the bar THAT type must clear. Issue #28:
+ * rich-results-requirements marks WebSite/CollectionPage/etc. permanently ineligible,
+ * so a single global rich bar over a mixed type set would be unsatisfiable — the bar
+ * has to travel per type. `outcome: "valid"` types are only ever required to validate;
+ * `outcome: "rich_results_eligible"` types are held to the rich bar only when the
+ * goal's minOutcome also demands it (see requirementsForPage in page-type-matrix.ts).
+ */
+export interface TypeRequirement {
+  type: string;
+  outcome: MinOutcome;
+}
 
 export interface GoalTarget {
   scope: GoalScope;
   /** Required when scope is "url_list". */
   urls?: string[];
-  /** Schema types each target page must have, e.g. ["Product"]. */
+  /**
+   * Schema types each target page must have, e.g. ["Product"]. Ignored for scope
+   * "site", where per-page requirements come from the page-type matrix instead.
+   */
   requireTypes: string[];
   minOutcome: MinOutcome;
 }
@@ -86,6 +102,12 @@ export interface PerceivedPage {
   hadSchema: boolean;
   /** Already meets the goal (its live schema is valid for the required types). */
   satisfied: boolean;
+  /**
+   * This page's required types with their per-type bars (issue #28). Absent means
+   * "uniform from the goal" — derived from target.requireTypes + minOutcome — which
+   * keeps every pre-matrix caller and fixture working unchanged.
+   */
+  requirements?: TypeRequirement[];
 }
 
 export interface PlannedTask {
@@ -93,6 +115,8 @@ export interface PlannedTask {
   kind: TaskKind;
   beforeErrorCount: number;
   beforeHadSchema: boolean;
+  /** Carried verbatim from the perceived page (see PerceivedPage.requirements). */
+  requirements?: TypeRequirement[];
 }
 
 // ---- Audit ----

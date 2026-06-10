@@ -21,7 +21,7 @@ import { extractJsonLd } from "@/lib/url-validator/extractor";
 import { validateSchema } from "@/lib/validation/engine";
 import { getRichResultInfo } from "@/lib/validation/rich-results";
 import { hasCriticalIssue, schemaTypesOf } from "./gates";
-import type { GateResult, MinOutcome } from "./types";
+import type { GateResult, MinOutcome, TypeRequirement } from "./types";
 
 const pass = (detail?: string): GateResult => ({ passed: true, detail });
 const fail = (detail: string): GateResult => ({ passed: false, detail });
@@ -34,6 +34,11 @@ export interface L4VerifyInput {
   requireTypes: string[];
   minOutcome: MinOutcome;
   /**
+   * Per-type bars (issue #28). When present, REPLACES requireTypes/minOutcome —
+   * same contract as GateInput.requirements, so L4 stays in lockstep with L1/L2.
+   */
+  requirements?: TypeRequirement[];
+  /**
    * Propagation polling — Shopify asset writes are eventually consistent. Defaults are
    * tuned for production; tests inject {maxAttempts:1} or a fake sleep for determinism.
    */
@@ -42,11 +47,10 @@ export interface L4VerifyInput {
   sleep?: (attempt: number) => Promise<void>;
 }
 
-/** Evaluate one fetched HTML payload against the requirement. Pure. */
+/** Evaluate one fetched HTML payload against the per-type requirements. Pure. */
 function verifyHtml(
   html: string,
-  requireTypes: string[],
-  minOutcome: MinOutcome
+  requirements: TypeRequirement[]
 ): GateResult {
   const extracted = extractJsonLd(html);
   const live = extracted
@@ -60,39 +64,46 @@ function verifyHtml(
   const validations = live.map((s) => validateSchema(s));
 
   // Every required type must have at least one VALID live schema of that type.
-  const missing = requireTypes.find(
-    (t) => !live.some((_, i) => validations[i].valid && schemaTypesOf(live[i]).includes(t))
+  const missing = requirements.find(
+    (r) =>
+      !live.some(
+        (_, i) => validations[i].valid && schemaTypesOf(live[i]).includes(r.type)
+      )
   );
   if (missing) {
-    return fail(`no valid '${missing}' schema in the live render`);
+    return fail(`no valid '${missing.type}' schema in the live render`);
   }
 
-  // Rich-results parity with L2: the type must be eligible AND its live valid
-  // instances free of critical-impact issues.
-  if (minOutcome === "rich_results_eligible") {
-    for (const t of requireTypes) {
-      if (getRichResultInfo(t)?.eligible !== true) {
-        return fail(`${t} is not rich-result eligible`);
-      }
-      const critical = live.some(
-        (_, i) =>
-          validations[i].valid &&
-          schemaTypesOf(live[i]).includes(t) &&
-          hasCriticalIssue(validations[i])
-      );
-      if (critical) {
-        return fail(`${t}: a critical issue blocks rich results in the live render`);
-      }
+  // Rich-results parity with L2: each rich-bar type must be eligible AND its
+  // live valid instances free of critical-impact issues.
+  for (const r of requirements) {
+    if (r.outcome !== "rich_results_eligible") continue;
+    if (getRichResultInfo(r.type)?.eligible !== true) {
+      return fail(`${r.type} is not rich-result eligible`);
+    }
+    const critical = live.some(
+      (_, i) =>
+        validations[i].valid &&
+        schemaTypesOf(live[i]).includes(r.type) &&
+        hasCriticalIssue(validations[i])
+    );
+    if (critical) {
+      return fail(`${r.type}: a critical issue blocks rich results in the live render`);
     }
   }
 
-  return pass(`live render carries valid ${requireTypes.join(", ")}`);
+  return pass(
+    `live render carries valid ${requirements.map((r) => r.type).join(", ")}`
+  );
 }
 
 const defaultSleep = () => Promise.resolve();
 
 export async function l4Verify(input: L4VerifyInput): Promise<GateResult> {
-  const { fetchHtml, url, requireTypes, minOutcome } = input;
+  const { fetchHtml, url } = input;
+  const requirements: TypeRequirement[] =
+    input.requirements ??
+    input.requireTypes.map((type) => ({ type, outcome: input.minOutcome }));
   const maxAttempts = Math.max(1, input.maxAttempts ?? 4);
   const sleep = input.sleep ?? defaultSleep;
 
@@ -111,7 +122,7 @@ export async function l4Verify(input: L4VerifyInput): Promise<GateResult> {
     }
 
     if (html) {
-      last = verifyHtml(html, requireTypes, minOutcome);
+      last = verifyHtml(html, requirements);
       if (last.passed) return last;
     }
 

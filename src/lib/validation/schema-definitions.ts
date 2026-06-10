@@ -1102,6 +1102,29 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
     ],
   },
 
+  WebPage: {
+    type: "WebPage",
+    extends: "Thing",
+    description: "A generic web page (e.g. a Shopify /pages/ content page).",
+    properties: [
+      {
+        name: "name",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "description",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "url",
+        requirement: "recommended",
+        valueType: "URL",
+      },
+    ],
+  },
+
   AboutPage: {
     type: "AboutPage",
     extends: "Thing",

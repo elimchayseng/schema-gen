@@ -115,6 +115,45 @@ describe("l4Verify (live verify)", () => {
     expect(sleep).toHaveBeenCalledTimes(1); // slept once between the two attempts
   });
 
+  // Issue #28: per-type bars — same contract as the L2 gate's requirements.
+  it("per-type requirements: a valid-bar ineligible type passes next to a rich-bar type", async () => {
+    const website = {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "Acme",
+      url: "https://example.com",
+    };
+    const html = `<!doctype html><html><head>
+      <script type="application/ld+json">${JSON.stringify(VALID_PRODUCT)}</script>
+      <script type="application/ld+json">${JSON.stringify(website)}</script>
+      </head><body></body></html>`;
+    const r = await l4Verify({
+      fetchHtml: async () => html,
+      url: URL,
+      requireTypes: ["Product", "WebSite"],
+      minOutcome: "valid",
+      requirements: [
+        { type: "Product", outcome: "rich_results_eligible" },
+        { type: "WebSite", outcome: "valid" }, // ineligible — must NOT be held to rich
+      ],
+      maxAttempts: 1,
+    });
+    expect(r.passed).toBe(true);
+  });
+
+  it("per-type requirements REPLACE requireTypes/minOutcome when present", async () => {
+    const r = await l4Verify({
+      fetchHtml: async () => pageWith(VALID_PRODUCT),
+      url: URL,
+      requireTypes: ["Product"],
+      minOutcome: "valid",
+      requirements: [{ type: "WebSite", outcome: "valid" }],
+      maxAttempts: 1,
+    });
+    expect(r.passed).toBe(false);
+    expect(r.detail).toMatch(/no valid 'WebSite'/);
+  });
+
   it("exhausts attempts when the page never renders the schema", async () => {
     const fetchHtml = vi.fn(async () => EMPTY_PAGE);
     const sleep = vi.fn(noSleep);

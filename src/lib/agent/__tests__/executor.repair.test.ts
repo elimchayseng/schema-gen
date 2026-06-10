@@ -156,8 +156,11 @@ describe("executeTask self-correction (the 'no longer crashes on first invalid p
       fetchHeaders: { Cookie: "storefront_digest=xyz" },
     });
 
+    // requiredTypes rides along since issue #28: generation is told which types
+    // this page must produce.
     expect(mockProcess).toHaveBeenCalledWith(task.url, "optimize", undefined, {
       fetchHeaders: { Cookie: "storefront_digest=xyz" },
+      requiredTypes: ["Product"],
     });
   });
 });

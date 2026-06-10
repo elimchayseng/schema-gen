@@ -310,7 +310,8 @@ export async function readSSEStream(
 
 export async function generateSchemas(
   html: string,
-  url: string
+  url: string,
+  requiredTypes?: string[]
 ): Promise<GeneratorResult> {
   if (!INFERENCE_URL || !INFERENCE_KEY || !INFERENCE_MODEL) {
     throw new Error(
@@ -331,11 +332,21 @@ export async function generateSchemas(
     model: INFERENCE_MODEL,
   });
 
+  // Issue #28: the agent knows which schema types this page type requires (the
+  // page-type matrix), so the prompt names them explicitly instead of leaving
+  // type selection to the model. Deterministic input → also part of the cache key.
+  const requiredBlock =
+    requiredTypes && requiredTypes.length > 0
+      ? `\n\nREQUIRED SCHEMA TYPES: ${requiredTypes.join(", ")}\n` +
+        "You MUST return one complete recommendation for EACH of these types " +
+        "(in addition to any other types genuinely appropriate for the page)."
+      : "";
+
   const messages: LLMMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     {
       role: "user",
-      content: `URL: ${url}\n\nHTML CONTENT:\n${cleanedHtml}`,
+      content: `URL: ${url}${requiredBlock}\n\nHTML CONTENT:\n${cleanedHtml}`,
     },
   ];
 

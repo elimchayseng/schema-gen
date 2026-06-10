@@ -104,6 +104,72 @@ describe("runGates", () => {
 
 });
 
+// Issue #28: per-type bars. A page can require one type at the rich bar and
+// another that only ever has to validate (rich-ineligible types like WebSite).
+describe("runGates with per-type requirements", () => {
+  const validWebSite = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "Acme",
+    url: "https://example.com",
+  };
+  const validOrg = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "Acme",
+    url: "https://example.com",
+  };
+
+  it("a rich-ineligible type at the 'valid' bar passes alongside a rich-bar type", () => {
+    // The homepage row of the matrix: Organization@rich + WebSite@valid. A global
+    // rich bar would be unsatisfiable (WebSite is permanently ineligible).
+    const g = runGates({
+      ...base,
+      requirements: [
+        { type: "Organization", outcome: "rich_results_eligible" },
+        { type: "WebSite", outcome: "valid" },
+      ],
+      candidates: [validOrg, validWebSite],
+    });
+    expect(gatesPassed(g)).toBe(true);
+    expect(g.L2?.passed).toBe(true); // evaluated — for Organization only
+  });
+
+  it("L2 is null when no requirement carries the rich bar", () => {
+    const g = runGates({
+      ...base,
+      requirements: [{ type: "WebSite", outcome: "valid" }],
+      candidates: [validWebSite],
+    });
+    expect(g.L2).toBeNull();
+    expect(gatesPassed(g)).toBe(true);
+  });
+
+  it("requirements REPLACE requireTypes/minOutcome when present", () => {
+    // base says Product@valid; requirements demand WebSite — and win.
+    const g = runGates({
+      ...base,
+      requirements: [{ type: "WebSite", outcome: "valid" }],
+      candidates: [validProduct],
+    });
+    expect(g.L1.passed).toBe(false);
+    expect(g.L1.detail).toMatch(/WebSite/);
+  });
+
+  it("a missing rich-bar type still fails L1 (per-type sets are complete sets)", () => {
+    const g = runGates({
+      ...base,
+      requirements: [
+        { type: "Product", outcome: "rich_results_eligible" },
+        { type: "BreadcrumbList", outcome: "rich_results_eligible" },
+      ],
+      candidates: [validProduct],
+    });
+    expect(g.L1.passed).toBe(false);
+    expect(g.L1.detail).toMatch(/BreadcrumbList/);
+  });
+});
+
 describe("schemaTypesOf", () => {
   it("normalizes string, array, and missing @type", () => {
     expect(schemaTypesOf({ "@type": "Product" })).toEqual(["Product"]);

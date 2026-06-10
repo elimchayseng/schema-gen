@@ -103,6 +103,12 @@ const richResults: Record<string, RichResultInfo> = {
     description:
       "Can trigger a carousel of items in search results.",
   },
+  WebPage: {
+    eligible: false,
+    feature: "Supported type",
+    description:
+      "Recognized by Google but does not generate a specific rich result.",
+  },
   AboutPage: {
     eligible: false,
     feature: "Supported type",

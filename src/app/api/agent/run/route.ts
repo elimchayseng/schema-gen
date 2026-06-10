@@ -22,7 +22,7 @@ import type {
  *
  * dryRun defaults to TRUE. Going live requires the body to explicitly send dryRun:false.
  */
-const VALID_SCOPES: GoalScope[] = ["all_products", "all_pages", "url_list"];
+const VALID_SCOPES: GoalScope[] = ["site", "all_products", "all_pages", "url_list"];
 const VALID_OUTCOMES: MinOutcome[] = ["valid", "rich_results_eligible"];
 
 interface RunRequestBody {
@@ -90,8 +90,14 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  // Scope "site" derives per-page required types from the page-type matrix
+  // (issue #28), so requireTypes is optional there; every other scope keeps the
+  // pre-existing non-empty requirement unchanged.
   const requireTypes = target?.requireTypes ?? [];
-  if (!Array.isArray(requireTypes) || requireTypes.length === 0) {
+  if (
+    !Array.isArray(requireTypes) ||
+    (scope !== "site" && requireTypes.length === 0)
+  ) {
     return NextResponse.json(
       { error: "target.requireTypes must be a non-empty array" },
       { status: 400 }

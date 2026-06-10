@@ -14,7 +14,7 @@ import {
   getSeverityContext,
 } from "@/lib/validation/rich-results";
 import type { ValidationResult } from "@/lib/validation/types";
-import type { GateResult, GateResults, MinOutcome } from "./types";
+import type { GateResult, GateResults, MinOutcome, TypeRequirement } from "./types";
 
 const pass = (detail?: string): GateResult => ({ passed: true, detail });
 const fail = (detail: string): GateResult => ({ passed: false, detail });
@@ -42,6 +42,13 @@ export interface GateInput {
   candidates: Record<string, unknown>[];
   requireTypes: string[];
   minOutcome: MinOutcome;
+  /**
+   * Per-type bars (issue #28). When present, REPLACES requireTypes/minOutcome:
+   * L1 requires every listed type, L2 holds only the "rich_results_eligible"
+   * entries to the rich bar. Absent = the pre-#28 uniform behavior (every
+   * requireTypes entry at minOutcome).
+   */
+  requirements?: TypeRequirement[];
   /** Error count of the page's current (pre-change) schema. */
   beforeErrorCount: number;
   /** Whether the page had any schema before this change. */
@@ -49,13 +56,14 @@ export interface GateInput {
 }
 
 export function runGates(input: GateInput): GateResults {
-  const {
-    candidates,
-    requireTypes,
-    minOutcome,
-    beforeErrorCount,
-    beforeHadSchema,
-  } = input;
+  const { candidates, beforeErrorCount, beforeHadSchema } = input;
+  const requirements: TypeRequirement[] =
+    input.requirements ??
+    input.requireTypes.map((type) => ({ type, outcome: input.minOutcome }));
+  const requireTypes = requirements.map((r) => r.type);
+  const richTypes = requirements
+    .filter((r) => r.outcome === "rich_results_eligible")
+    .map((r) => r.type);
 
   // L0 — candidate is a non-empty, JSON-serializable set of objects.
   let L0: GateResult;
@@ -99,14 +107,14 @@ export function runGates(input: GateInput): GateResults {
     L1 = missing ? fail(`no valid '${missing}' schema on the page`) : pass();
   }
 
-  // L2 — rich-results eligibility, only when the goal demands it.
+  // L2 — rich-results eligibility, only for the types whose bar demands it.
   let L2: GateResult | null = null;
-  if (minOutcome === "rich_results_eligible") {
+  if (richTypes.length > 0) {
     if (!L1.passed) {
       L2 = fail("skipped (L1 failed)");
     } else {
       const problems: string[] = [];
-      for (const t of requireTypes) {
+      for (const t of richTypes) {
         if (getRichResultInfo(t)?.eligible !== true) {
           problems.push(`${t} is not rich-result eligible`);
           continue;

@@ -105,6 +105,36 @@ describe("POST /api/agent/run", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400 when requireTypes is empty for a non-site scope (pre-existing contract)", async () => {
+    mockCreateSupabase.mockResolvedValue(mockSupabase({}) as never);
+    const res = await POST(
+      req({ siteId: "site-1", target: { scope: "all_products", requireTypes: [] } })
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts scope 'site' without requireTypes (issue #28: matrix-driven)", async () => {
+    mockCreateSupabase.mockResolvedValue(mockSupabase({}) as never);
+    const res = await POST(
+      req({
+        siteId: "site-1",
+        target: { scope: "site", minOutcome: "rich_results_eligible" },
+      })
+    );
+    expect(res.status).toBe(200);
+    await drain(res);
+    expect(agentMock.runGoal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({
+          scope: "site",
+          requireTypes: [],
+          minOutcome: "rich_results_eligible",
+        }),
+      }),
+      expect.anything()
+    );
+  });
+
   it("streams SSE and forwards onProgress events", async () => {
     mockCreateSupabase.mockResolvedValue(mockSupabase({}) as never);
     agentMock.runGoal.mockImplementation(async (_goal, optsArg) => {

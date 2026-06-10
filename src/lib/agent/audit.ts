@@ -23,6 +23,26 @@ export async function createRun(goal: Goal): Promise<string> {
   return (data as { id: string }).id;
 }
 
+/**
+ * Persist the run's resolved target URL list (issue #27, migration 010). Written once,
+ * right after resolveTargetUrls, so the merchant report can compute notReached exactly
+ * for ANY scope — not just url_list goals. Callers treat this like the other audit
+ * writes: best-effort (warn + continue on failure).
+ */
+export async function saveResolvedUrls(
+  runId: string,
+  urls: string[]
+): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("agent_runs")
+    .update({ resolved_urls: urls })
+    .eq("id", runId);
+  if (error) {
+    throw new Error(`Failed to save resolved_urls: ${error.message}`);
+  }
+}
+
 export async function recordAction(
   runId: string,
   a: ActionRecord

@@ -48,6 +48,9 @@ const HEADER =
 // Liquid's under-specified string-escape rules) is what actually prevents a
 // crafted handle/template from injecting Liquid into the conditional.
 const HANDLE_RE = /^[a-z0-9][a-z0-9_-]*$/;
+// Liquid's article.handle is "<blog-handle>/<article-handle>" (one slash, both
+// halves ordinary handles) — article entries alone may use this two-part form.
+const ARTICLE_HANDLE_RE = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)?$/;
 const TEMPLATE_RE = /^[a-z0-9][a-z0-9_.-]*$/;
 
 /** Single-quoted Liquid string literal (belt-and-suspenders; inputs are validated). */
@@ -59,10 +62,18 @@ function conditionFor(entry: SnippetEntry): string {
   if (!TEMPLATE_RE.test(entry.template)) {
     throw new Error(`Invalid Shopify template: ${JSON.stringify(entry.template)}`);
   }
+  // Homepage: exact match. `contains 'index'` would also fire on any custom
+  // template merely NAMED with "index" in it; the home template is always "index".
+  if (entry.template === "index") {
+    return `template == ${liquidStr("index")}`;
+  }
   // `contains` not `==` so "product.custom" templates still match "product".
   const parts = [`template contains ${liquidStr(entry.template)}`];
   if (entry.handle) {
-    if (!HANDLE_RE.test(entry.handle)) {
+    // Articles match on Liquid's two-part article.handle ("<blog>/<article>");
+    // every other resource handle is a plain single-segment handle.
+    const re = entry.template === "article" ? ARTICLE_HANDLE_RE : HANDLE_RE;
+    if (!re.test(entry.handle)) {
       throw new Error(`Invalid Shopify handle: ${JSON.stringify(entry.handle)}`);
     }
     const obj = HANDLE_OBJECT[entry.template];
@@ -136,8 +147,9 @@ export function urlToTemplateTarget(url: string): TemplateTarget | null {
     case "pages":
       return seg[1] ? { template: "page", handle: seg[1] } : { template: "page" };
     case "blogs":
-      // /blogs/<blog>/<article>
-      if (seg[2]) return { template: "article", handle: seg[2] };
+      // /blogs/<blog>/<article> — Liquid's article.handle is "<blog>/<article>",
+      // so the guard handle must carry both halves to match the live render.
+      if (seg[2]) return { template: "article", handle: `${seg[1]}/${seg[2]}` };
       return seg[1] ? { template: "blog", handle: seg[1] } : { template: "blog" };
     default:
       return null;

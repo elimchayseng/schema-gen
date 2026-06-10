@@ -9,7 +9,8 @@ import { urlToTemplateTarget, type SnippetEntry } from "@/lib/shopify/snippet";
 import { gatesPassed } from "./types";
 import { l6Judge } from "./judge";
 import { repairToGoal, type RefineFn } from "./repair";
-import type { ActionRecord, Goal, PlannedTask } from "./types";
+import { uniformRequirements } from "./page-type-matrix";
+import type { ActionRecord, Goal, PlannedTask, TypeRequirement } from "./types";
 
 export interface ExecutedTask {
   url: string;
@@ -42,9 +43,19 @@ export async function executeTask(
   task: PlannedTask,
   opts: ExecuteOptions = {}
 ): Promise<ExecutedTask> {
-  // optimize = extract -> validate -> fix -> AI generate -> refine.
+  // This page's required types with their per-type bars (issue #28): the planner
+  // threads them from perceive; absent (pre-matrix callers, url_list fixtures)
+  // they fall back to the goal's uniform requireTypes @ minOutcome.
+  const requirements: TypeRequirement[] =
+    task.requirements ??
+    uniformRequirements(goal.target.requireTypes, goal.target.minOutcome);
+
+  // optimize = extract -> validate -> fix -> AI generate -> refine. The required
+  // type names ride along so generation produces the page type's required SET
+  // (e.g. Product + BreadcrumbList), not whatever the model guesses.
   const result = await processPage(task.url, "optimize", undefined, {
     fetchHeaders: opts.fetchHeaders,
+    requiredTypes: requirements.map((r) => r.type),
   });
   const initialCandidates = (result.fixedSchemas ?? []) as Record<string, unknown>[];
 
@@ -56,6 +67,7 @@ export async function executeTask(
     candidates: initialCandidates,
     requireTypes: goal.target.requireTypes,
     minOutcome: goal.target.minOutcome,
+    requirements,
     beforeErrorCount: task.beforeErrorCount,
     beforeHadSchema: task.beforeHadSchema,
     maxAttempts: opts.maxRepairAttempts,

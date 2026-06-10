@@ -197,8 +197,15 @@ describe("runGoal (5-page fixture, dry-run)", () => {
     // executed actions persist their gates
     const withGates = actionInserts.filter((i) => i.payload.gates != null);
     expect(withGates).toHaveLength(4);
-    // run finalized
-    const runUpdate = h.state.updates.find((u) => u.table === "agent_runs");
+    // resolved target list persisted right after resolution (issue #27)…
+    const resolvedUpdate = h.state.updates.find(
+      (u) => u.table === "agent_runs" && "resolved_urls" in u.payload
+    );
+    expect(resolvedUpdate?.payload).toEqual({ resolved_urls: [A, B, C, D, E] });
+    // …and the run finalized
+    const runUpdate = h.state.updates.find(
+      (u) => u.table === "agent_runs" && "status" in u.payload
+    );
     expect(runUpdate?.payload).toMatchObject({ status: "done" });
   });
 

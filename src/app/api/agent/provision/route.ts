@@ -74,14 +74,18 @@ export async function POST(request: Request) {
     );
   }
 
-  // The default one-shot goal: make every product page rich-results eligible.
+  // The default one-shot goal: the whole site, one button (issues #27/#28).
+  // Scope "site" derives per-page required types from the page-type matrix, so
+  // requireTypes stays empty; minOutcome "rich_results_eligible" holds the
+  // rich-capable types (Product, BreadcrumbList, Organization, ...) to the rich
+  // bar while WebSite/CollectionPage/etc. are only ever required to validate.
   // allowSchemaTypeChange is required by the Goal type and defaults to false
   // (novel type changes stay gated), matching /api/agent/run's default.
   const goal: Goal = {
     siteId: site.id,
     target: {
-      scope: "all_products",
-      requireTypes: ["Product"],
+      scope: "site",
+      requireTypes: [],
       minOutcome: "rich_results_eligible",
     },
     constraints: {

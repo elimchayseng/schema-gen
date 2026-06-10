@@ -274,6 +274,33 @@ describe("buildMerchantReport", () => {
     expect(report.verdict.goodToGo).toBe(false);
   });
 
+  it("resolved_urls (issue #27) makes notReached exact for non-url_list scopes", () => {
+    const run = makeRun({
+      status: "failed",
+      error: "halted by circuit breaker: consecutive_failures",
+      goal: {
+        target: { scope: "site", requireTypes: [], minOutcome: "rich_results_eligible" },
+      },
+      resolved_urls: [PRODUCT_A, PRODUCT_B, PRODUCT_C],
+    });
+    const report = buildMerchantReport(run, [actRow(PRODUCT_A, "fix")]);
+
+    const notReached = report.pages.filter((p) => p.disposition === "skipped");
+    expect(notReached.map((p) => p.url).sort()).toEqual([PRODUCT_B, PRODUCT_C]);
+    expect(report.summary.notReached).toBe(2);
+    expect(report.verdict.goodToGo).toBe(false);
+  });
+
+  it("scope 'site' already-good pages get matrix types, not the goal's requireTypes", () => {
+    const run = makeRun({
+      goal: {
+        target: { scope: "site", requireTypes: [], minOutcome: "rich_results_eligible" },
+      },
+    });
+    const report = buildMerchantReport(run, [skipRow(PRODUCT_A, "already_satisfied")]);
+    expect(report.pages[0].schemaTypes).toEqual(["Product", "BreadcrumbList"]);
+  });
+
   it("uses the LAST act row per url (self-repair re-records)", () => {
     const report = buildMerchantReport(makeRun(), [
       actRow(PRODUCT_A, "fix", "gate_failed", { gates: passingGates() }),

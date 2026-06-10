@@ -29,8 +29,21 @@ import {
   recordRollbackFailure,
   tripped,
 } from "./breakers";
-import { createRun, finishRun, loadCommittedUrls, recordAction } from "./audit";
+import {
+  createRun,
+  finishRun,
+  loadCommittedUrls,
+  recordAction,
+  saveResolvedUrls,
+} from "./audit";
 import { chunk, clampConcurrency } from "./concurrency";
+import {
+  classifyPageType,
+  PAGE_TYPE_PRIORITY,
+  requirementsForTarget,
+  type PageType,
+} from "./page-type-matrix";
+import { enumerateCatalogUrls } from "./catalog";
 
 function warn(msg: string, e: unknown): void {
   console.warn(`[agent] ${msg}: ${e instanceof Error ? e.message : String(e)}`);
@@ -52,24 +65,27 @@ function toPerceived(goal: Goal, url: string, scan: PageResult): PerceivedPage {
   const hadSchema = (scan.originalSchemas?.length ?? 0) > 0;
   const errorCount = scan.validationResults?.errorCount ?? 0;
 
+  // This page's required types with their per-type bars (issue #28): matrix-driven
+  // for scope "site", the goal's uniform requireTypes @ minOutcome otherwise.
+  const requirements = requirementsForTarget(goal.target, url);
+
   const validSchemas = (scan.validationResults?.schemas ?? []).filter(
     (s) => s.validation.valid
   );
   const validTypes = new Set(validSchemas.map((s) => s.type));
-  const typesOk = goal.target.requireTypes.every((t) => validTypes.has(t));
+  const typesOk = requirements.every((r) => validTypes.has(r.type));
 
-  // rich-results skip path must match the L2 gate exactly: the required type must
+  // rich-results skip path must match the L2 gate exactly: a rich-bar type must
   // be rich-eligible AND every live valid schema of that type must be free of
   // critical-impact issues. Otherwise a page L2 would reject could be skipped.
-  const richOk =
-    goal.target.minOutcome !== "rich_results_eligible" ||
-    goal.target.requireTypes.every((t) => {
-      if (getRichResultInfo(t)?.eligible !== true) return false;
-      const ofType = validSchemas.filter((s) => s.type === t);
-      return (
-        ofType.length > 0 && ofType.every((s) => !hasCriticalIssue(s.validation))
-      );
-    });
+  const richOk = requirements.every((r) => {
+    if (r.outcome !== "rich_results_eligible") return true;
+    if (getRichResultInfo(r.type)?.eligible !== true) return false;
+    const ofType = validSchemas.filter((s) => s.type === r.type);
+    return (
+      ofType.length > 0 && ofType.every((s) => !hasCriticalIssue(s.validation))
+    );
+  });
 
   return {
     url,
@@ -77,6 +93,7 @@ function toPerceived(goal: Goal, url: string, scan: PageResult): PerceivedPage {
     errorCount,
     hadSchema,
     satisfied: scan.status === "valid" && typesOk && richOk,
+    requirements,
   };
 }
 
@@ -107,32 +124,78 @@ async function backupRow(
   }
 }
 
-async function getSiteDomain(siteId: string): Promise<string> {
+async function getSiteRow(
+  siteId: string
+): Promise<{ domain: string; shopDomain: string | null }> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("sites")
-    .select("domain")
+    .select("domain, shop_domain")
     .eq("id", siteId)
     .single();
   if (error || !data) {
     throw new Error(`Could not resolve site domain for ${siteId}: ${error?.message}`);
   }
-  return (data as { domain: string }).domain;
+  const row = data as { domain: string; shop_domain?: string | null };
+  return { domain: row.domain, shopDomain: row.shop_domain ?? null };
 }
 
-/** Resolve the goal's scope into a concrete URL list. */
+/**
+ * Resolve the goal's scope into a concrete URL list (issue #27).
+ *
+ * "site" / "all_pages": classify every sitemap URL against the page-type matrix and
+ * keep the kinds the matrix covers (home/product/collection/article/page), ordered by
+ * the DETERMINISTIC page-type priority (home first, then products, collections,
+ * articles, pages; stable within a kind) so a maxPages-capped run always covers the
+ * most valuable pages. When the sitemap yields nothing (password-gated dev store), the
+ * Admin-API catalog fallback enumerates products + collections — gated on the site's
+ * Shopify credentials actually resolving (enumerateCatalogUrls degrades to []).
+ */
 async function resolveTargetUrls(goal: Goal): Promise<string[]> {
   if (goal.target.scope === "url_list") {
     return goal.target.urls ?? [];
   }
-  const domain = await getSiteDomain(goal.siteId);
-  const { urls } = await fetchSitemap(domain);
-  const mapped = urls.map((u) => ({ url: u.loc, t: urlToTemplateTarget(u.loc) }));
+  const site = await getSiteRow(goal.siteId);
+  const { urls } = await fetchSitemap(site.domain);
+  let candidates = urls.map((u) => u.loc);
+
   if (goal.target.scope === "all_products") {
-    return mapped.filter((m) => m.t?.template === "product").map((m) => m.url);
+    return candidates.filter(
+      (u) => urlToTemplateTarget(u)?.template === "product"
+    );
   }
-  // all_pages: any URL that maps to a known template.
-  return mapped.filter((m) => m.t !== null).map((m) => m.url);
+
+  // site / all_pages: Admin-API fallback only when the sitemap gave nothing.
+  if (candidates.length === 0) {
+    candidates = await enumerateCatalogUrls(site.domain, site.shopDomain);
+  }
+
+  const classified = candidates
+    .map((url) => ({ url, pageType: classifyPageType(url) }))
+    .filter((c): c is { url: string; pageType: PageType } => c.pageType !== null);
+
+  // A "site" goal always includes the homepage, even when the sitemap omits "/".
+  // Only synthesized when something else resolved — an empty resolution (gated
+  // store, no credentials) must stay empty rather than chase a password wall.
+  if (
+    goal.target.scope === "site" &&
+    classified.length > 0 &&
+    !classified.some((c) => c.pageType === "home")
+  ) {
+    classified.unshift({ url: `https://${site.domain}/`, pageType: "home" });
+  }
+
+  const ordered = classified
+    .map((c, i) => ({ ...c, i }))
+    .sort(
+      (a, b) =>
+        PAGE_TYPE_PRIORITY[a.pageType] - PAGE_TYPE_PRIORITY[b.pageType] ||
+        a.i - b.i
+    )
+    .map((c) => c.url);
+
+  const cap = goal.constraints.maxPages;
+  return cap != null ? ordered.slice(0, cap) : ordered;
 }
 
 /**
@@ -170,10 +233,14 @@ function makeLiveVerify(target: GoalTarget, themeId: number, shop: string) {
   return (url: string, _entry: SnippetEntry) => {
     void _entry;
     const previewUrl = `${url}${url.includes("?") ? "&" : "?"}preview_theme_id=${themeId}`;
+    // Per-page requirements (issue #28): L4 must demand exactly what L1/L2 demanded
+    // for THIS page's type, not one global type set.
+    const requirements = requirementsForTarget(target, url);
     return l4Verify({
       url: previewUrl,
-      requireTypes: target.requireTypes,
+      requireTypes: requirements.map((r) => r.type),
       minOutcome: target.minOutcome,
+      requirements,
       fetchHtml: async (u) => {
         const cookie = await getCookie();
         const r = await fetchPage(u, cookie ? { headers: { Cookie: cookie } } : {});
@@ -259,6 +326,16 @@ export async function runGoal(
   try {
     // PERCEIVE — no LLM. A kill between batches stops here; nothing has been written.
     let urls = await resolveTargetUrls(goal);
+
+    // Persist the resolved target list (issue #27) so the merchant report can compute
+    // notReached exactly for any scope. Best-effort, like every other audit write.
+    if (runId) {
+      try {
+        await saveResolvedUrls(runId, urls);
+      } catch (e) {
+        warn("saveResolvedUrls failed (continuing)", e);
+      }
+    }
 
     // Idempotent resume (Phase 5): drop pages this run already committed live (an
     // l4_pass verify row). A resumed run never re-processes them; a fresh run has none,

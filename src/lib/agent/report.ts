@@ -10,6 +10,7 @@
  * our own deterministic verdict ("Validated by SchemaGen, gates L0–L4") and a
  * per-page deep link the merchant clicks to confirm with Google themselves.
  */
+import { classifyPageType, PAGE_TYPE_MATRIX } from "./page-type-matrix";
 import type { GateResults } from "./types";
 
 // ---- Input row shapes (snake_case, exactly as the two tables store them) ----
@@ -31,6 +32,12 @@ export interface AgentRunRow {
   started_at: string;
   ended_at: string | null;
   error: string | null;
+  /**
+   * The concrete URL list the run resolved its scope to (migration 010, issue #27).
+   * When present it is the exact notReached baseline; absent (older runs) the report
+   * falls back to goal.target.urls for url_list goals, as before.
+   */
+  resolved_urls?: string[] | null;
 }
 
 export interface AgentActionRow {
@@ -157,6 +164,15 @@ function deriveSiteDomain(urls: string[]): string | undefined {
     }
   }
   return undefined;
+}
+
+/** The schema types the goal expects of one URL (matrix-driven for scope "site"). */
+function expectedTypesFor(run: AgentRunRow, url: string): string[] {
+  if (run.goal?.target?.scope === "site") {
+    const pageType = classifyPageType(url);
+    return pageType ? PAGE_TYPE_MATRIX[pageType].map((r) => r.type) : [];
+  }
+  return run.goal?.target?.requireTypes ?? [];
 }
 
 function humanizeFailure(outcome: string, gates: GateResults | null): string {
@@ -299,7 +315,7 @@ export function buildMerchantReport(
       pages.push({
         url: g.url,
         disposition: "already_good",
-        schemaTypes: run.goal?.target?.requireTypes ?? [],
+        schemaTypes: expectedTypesFor(run, g.url),
         gates: alreadyGoodGates(richRequired),
         googleTestUrl,
         note: "This page's structured data was already correct — nothing was changed.",
@@ -312,7 +328,7 @@ export function buildMerchantReport(
       pages.push({
         url: g.url,
         disposition: "fixed",
-        schemaTypes: run.goal?.target?.requireTypes ?? [],
+        schemaTypes: expectedTypesFor(run, g.url),
         gates: buildGates(null, { passed: true }),
         googleTestUrl,
         note: "Applied and live-verified earlier in this run.",
@@ -403,7 +419,7 @@ export function buildMerchantReport(
       pages.push({
         url: g.url,
         disposition: l4.passed ? "fixed" : rolledBack ? "rolled_back" : "failed",
-        schemaTypes: run.goal?.target?.requireTypes ?? [],
+        schemaTypes: expectedTypesFor(run, g.url),
         gates: buildGates(null, l4),
         googleTestUrl,
         ...(l4.passed ? {} : { failureReason: l4.detail ?? "Failed live verification" }),
@@ -415,9 +431,11 @@ export function buildMerchantReport(
   }
 
   // Pages the goal asked for that never produced an action row (run killed/halted
-  // before reaching them). Only knowable for an explicit url_list goal.
+  // before reaching them). The persisted resolved_urls list (issue #27) makes this
+  // exact for ANY scope; older runs without it fall back to url_list goal urls.
   const goalUrls =
-    run.goal?.target?.scope === "url_list" ? (run.goal.target.urls ?? []) : [];
+    run.resolved_urls ??
+    (run.goal?.target?.scope === "url_list" ? (run.goal.target.urls ?? []) : []);
   let notReached = 0;
   for (const u of goalUrls) {
     if (byUrl.has(u)) continue;
