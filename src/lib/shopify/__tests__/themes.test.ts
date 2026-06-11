@@ -220,6 +220,7 @@ describe("prepareStagingTheme", () => {
       sourceThemeId: 100, // role "main" auto-detected
       previewUrl:
         "https://garnerandtow.myshopify.com/?preview_theme_id=300",
+      reused: false,
     });
   });
 
@@ -253,5 +254,158 @@ describe("prepareStagingTheme", () => {
     await expect(prepareStagingTheme(999, "copy", ctx)).rejects.toThrow(
       /theme 999 not found/
     );
+  });
+});
+
+describe("prepareStagingTheme reuse (persistent managed staging theme)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const managedThemes: ShopifyTheme[] = [
+    { id: 100, name: "Live Horizon", role: "main" },
+    {
+      id: 200,
+      name: "SchemaGen Staging 2026-06-10",
+      role: "unpublished",
+      updated_at: "2026-06-10T00:00:00Z",
+    },
+  ];
+
+  it("reuses the managed staging theme: syncs checksum-diffs only, deletes extras, no duplicate", async () => {
+    const puts: unknown[] = [];
+    const deletes: string[] = [];
+    routeFetch({
+      "GET /themes.json": () => ({ themes: managedThemes }),
+      // Source: a unchanged, b changed, c has no checksum (always copied).
+      "GET /themes/100/assets.json": () => ({
+        assets: [
+          { key: "layout/theme.liquid", checksum: "same" },
+          { key: "sections/main.liquid", checksum: "new" },
+          { key: "snippets/nochk.liquid" },
+        ],
+      }),
+      // Target: stale copy of b, an extra from a previous run, no c.
+      "GET /themes/200/assets.json": () => ({
+        assets: [
+          { key: "layout/theme.liquid", checksum: "same" },
+          { key: "sections/main.liquid", checksum: "old" },
+          { key: "snippets/schemagen-jsonld.liquid", checksum: "x" },
+        ],
+      }),
+      "GET /themes/100/assets.json?sections/main.liquid": () => ({
+        asset: { key: "sections/main.liquid", value: "new body" },
+      }),
+      "GET /themes/100/assets.json?snippets/nochk.liquid": () => ({
+        asset: { key: "snippets/nochk.liquid", value: "snippet" },
+      }),
+      "PUT /themes/200/assets.json": (opts) => {
+        puts.push(opts?.body);
+        return { asset: {} };
+      },
+      "DELETE /themes/200/assets.json?snippets/schemagen-jsonld.liquid": () => {
+        deletes.push("snippets/schemagen-jsonld.liquid");
+        return {};
+      },
+    });
+
+    const result = await prepareStagingTheme(undefined, "SchemaGen Staging 2026-06-11", ctx, {
+      reuse: true,
+    });
+
+    expect(result.stagingThemeId).toBe(200);
+    expect(result.reused).toBe(true);
+    expect(result.sourceThemeId).toBe(100);
+    // Only the changed + checksumless assets were copied (dependency order).
+    expect(puts).toEqual([
+      { asset: { key: "snippets/nochk.liquid", value: "snippet" } },
+      { asset: { key: "sections/main.liquid", value: "new body" } },
+    ]);
+    // The previous run's leftover footprint is gone — staging equals live.
+    expect(deletes).toEqual(["snippets/schemagen-jsonld.liquid"]);
+    // No theme was created: the whole point.
+    expect(mockFetch).not.toHaveBeenCalledWith(
+      "/themes.json",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("prefers the most recently updated managed staging theme", async () => {
+    routeFetch({
+      "GET /themes.json": () => ({
+        themes: [
+          ...managedThemes,
+          {
+            id: 201,
+            name: "SchemaGen Staging 2026-06-11",
+            role: "unpublished",
+            updated_at: "2026-06-11T00:00:00Z",
+          },
+        ],
+      }),
+      "GET /themes/100/assets.json": () => ({ assets: [] }),
+      "GET /themes/201/assets.json": () => ({ assets: [] }),
+    });
+
+    const result = await prepareStagingTheme(undefined, "n", ctx, { reuse: true });
+    expect(result.stagingThemeId).toBe(201);
+    expect(result.reused).toBe(true);
+  });
+
+  it("never reuses the published theme even when its name matches the prefix", async () => {
+    // After a publish, the live theme IS a "SchemaGen Staging …" — it's the
+    // source, not a reuse candidate. With no other candidate: full duplicate.
+    routeFetch({
+      "GET /themes.json": () => ({
+        themes: [{ id: 100, name: "SchemaGen Staging 2026-06-11", role: "main" }],
+      }),
+      "GET /themes/100/assets.json": () => ({ assets: [] }),
+      "POST /themes.json": () => ({ theme: { id: 300, role: "unpublished" } }),
+    });
+
+    const result = await prepareStagingTheme(undefined, "n", ctx, { reuse: true });
+    expect(result.stagingThemeId).toBe(300);
+    expect(result.reused).toBe(false);
+    expect(result.sourceThemeId).toBe(100);
+  });
+
+  it("falls back to a clean full duplicate when the sync fails, deleting the half-synced theme", async () => {
+    let deleted = false;
+    routeFetch({
+      "GET /themes.json": () => ({ themes: managedThemes }),
+      "GET /themes/100/assets.json": () => ({
+        assets: [{ key: "layout/theme.liquid", checksum: "new" }],
+      }),
+      "GET /themes/200/assets.json": () => ({
+        assets: [{ key: "layout/theme.liquid", checksum: "old" }],
+      }),
+      "GET /themes/100/assets.json?layout/theme.liquid": () => ({
+        asset: { key: "layout/theme.liquid", value: "<html>" },
+      }),
+      // Sync write fails hard (non-422) → fallback.
+      "PUT /themes/200/assets.json": () => {
+        throw new Error("500 from Shopify");
+      },
+      "DELETE /themes/200.json": () => {
+        deleted = true;
+        return {};
+      },
+      "POST /themes.json": () => ({ theme: { id: 300, role: "unpublished" } }),
+      "PUT /themes/300/assets.json": () => ({ asset: {} }),
+    });
+
+    const result = await prepareStagingTheme(undefined, "n", ctx, { reuse: true });
+    expect(deleted).toBe(true);
+    expect(result.stagingThemeId).toBe(300);
+    expect(result.reused).toBe(false);
+  });
+
+  it("reuse off (default): always duplicates even when a managed staging theme exists", async () => {
+    routeFetch({
+      "GET /themes.json": () => ({ themes: managedThemes }),
+      "GET /themes/100/assets.json": () => ({ assets: [] }),
+      "POST /themes.json": () => ({ theme: { id: 300, role: "unpublished" } }),
+    });
+    const result = await prepareStagingTheme(undefined, "n", ctx);
+    expect(result.stagingThemeId).toBe(300);
+    expect(result.reused).toBe(false);
   });
 });

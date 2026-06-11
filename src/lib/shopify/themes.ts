@@ -20,6 +20,7 @@
  * it, calls target the env-configured shop.
  */
 import {
+  assetDelete,
   assetGet,
   assetPut,
   assetsList,
@@ -118,14 +119,80 @@ function assetCopyRank(key: string): number {
   return i === -1 ? ASSET_COPY_ORDER.length : i;
 }
 
+/**
+ * Copy the named assets from one theme to another in dependency-safe order,
+ * deferring 422s (cross-asset references Shopify can't resolve yet) and
+ * retrying them until a full pass makes no progress. Shared by themeDuplicate
+ * (all assets) and syncThemeAssets (changed assets only).
+ */
+async function copyAssetsWithDeferral(
+  sourceId: number,
+  targetId: number,
+  keys: string[],
+  ctx?: ShopContext
+): Promise<void> {
+  const ordered = [...keys].sort((a, b) => assetCopyRank(a) - assetCopyRank(b));
+  const putOne = async (key: string): Promise<void> => {
+    const full = await assetGet(sourceId, key, ctx);
+    if (full.attachment != null) {
+      await assetPut(targetId, { key, attachment: full.attachment }, ctx);
+    } else if (full.value != null) {
+      await assetPut(targetId, { key, value: full.value }, ctx);
+    }
+    // Assets with neither value nor attachment (shouldn't happen) are skipped.
+  };
+
+  // First pass in dependency-safe order; 422s are deferred, anything else is fatal.
+  let deferred: string[] = [];
+  for (const key of ordered) {
+    try {
+      await putOne(key);
+    } catch (e) {
+      if ((e as { status?: number }).status === 422) {
+        deferred.push(key);
+      } else {
+        throw e;
+      }
+    }
+  }
+  // Retry deferred assets until a full pass makes no progress — each pass can
+  // only succeed where its dependencies landed in an earlier one.
+  while (deferred.length > 0) {
+    const stillFailing: string[] = [];
+    let lastErr: unknown = null;
+    for (const key of deferred) {
+      try {
+        await putOne(key);
+      } catch (e) {
+        if ((e as { status?: number }).status === 422) {
+          stillFailing.push(key);
+          lastErr = e;
+        } else {
+          throw e;
+        }
+      }
+    }
+    if (stillFailing.length === deferred.length) {
+      // No progress — the references are genuinely unsatisfiable.
+      throw lastErr instanceof Error
+        ? lastErr
+        : new Error(`theme asset copy: ${stillFailing.length} assets failed validation`);
+    }
+    shopifyLog("info", "Theme asset copy retry pass", {
+      targetThemeId: targetId,
+      resolved: deferred.length - stillFailing.length,
+      remaining: stillFailing.length,
+    });
+    deferred = stillFailing;
+  }
+}
+
 export async function themeDuplicate(
   themeId: number,
   name: string,
   ctx?: ShopContext
 ): Promise<ShopifyTheme> {
-  const sourceAssets = [...(await assetsList(themeId, ctx))].sort(
-    (a, b) => assetCopyRank(a.key) - assetCopyRank(b.key)
-  );
+  const sourceAssets = await assetsList(themeId, ctx);
   const target = await themeCreate(name, undefined, ctx);
   shopifyLog("info", "Duplicating theme", {
     sourceThemeId: themeId,
@@ -133,60 +200,12 @@ export async function themeDuplicate(
     assetCount: sourceAssets.length,
   });
   try {
-    const putOne = async (key: string): Promise<void> => {
-      const full = await assetGet(themeId, key, ctx);
-      if (full.attachment != null) {
-        await assetPut(target.id, { key, attachment: full.attachment }, ctx);
-      } else if (full.value != null) {
-        await assetPut(target.id, { key, value: full.value }, ctx);
-      }
-      // Assets with neither value nor attachment (shouldn't happen) are skipped.
-    };
-
-    // First pass in dependency-safe order; 422s (cross-asset references Shopify
-    // can't resolve yet) are deferred, anything else is fatal.
-    let deferred: string[] = [];
-    for (const meta of sourceAssets) {
-      try {
-        await putOne(meta.key);
-      } catch (e) {
-        if ((e as { status?: number }).status === 422) {
-          deferred.push(meta.key);
-        } else {
-          throw e;
-        }
-      }
-    }
-    // Retry deferred assets until a full pass makes no progress — each pass can
-    // only succeed where its dependencies landed in an earlier one.
-    while (deferred.length > 0) {
-      const stillFailing: string[] = [];
-      let lastErr: unknown = null;
-      for (const key of deferred) {
-        try {
-          await putOne(key);
-        } catch (e) {
-          if ((e as { status?: number }).status === 422) {
-            stillFailing.push(key);
-            lastErr = e;
-          } else {
-            throw e;
-          }
-        }
-      }
-      if (stillFailing.length === deferred.length) {
-        // No progress — the references are genuinely unsatisfiable.
-        throw lastErr instanceof Error
-          ? lastErr
-          : new Error(`theme duplicate: ${stillFailing.length} assets failed validation`);
-      }
-      shopifyLog("info", "Theme duplicate retry pass", {
-        targetThemeId: target.id,
-        resolved: deferred.length - stillFailing.length,
-        remaining: stillFailing.length,
-      });
-      deferred = stillFailing;
-    }
+    await copyAssetsWithDeferral(
+      themeId,
+      target.id,
+      sourceAssets.map((a) => a.key),
+      ctx
+    );
   } catch (err) {
     // Never leave a half-copied staging theme behind — it looks usable but isn't.
     try {
@@ -203,24 +222,88 @@ export async function themeDuplicate(
   return target;
 }
 
+/**
+ * Make `targetId` byte-identical to `sourceId` by copying only assets that are
+ * missing or whose checksum differs, and deleting assets the source doesn't
+ * have. With Shopify's per-asset checksums this is 2 list calls + O(changed)
+ * copies — seconds, not the minutes a full themeDuplicate costs. An asset with
+ * no checksum on either side is copied unconditionally (correctness over speed).
+ */
+export async function syncThemeAssets(
+  sourceId: number,
+  targetId: number,
+  ctx?: ShopContext
+): Promise<{ copied: number; deleted: number; unchanged: number }> {
+  const [src, dst] = await Promise.all([
+    assetsList(sourceId, ctx),
+    assetsList(targetId, ctx),
+  ]);
+  const dstByKey = new Map(dst.map((a) => [a.key, a]));
+  const changed = src.filter((a) => {
+    const d = dstByKey.get(a.key);
+    return !d || !a.checksum || !d.checksum || a.checksum !== d.checksum;
+  });
+  const srcKeys = new Set(src.map((a) => a.key));
+  const extras = dst.filter((a) => !srcKeys.has(a.key));
+
+  shopifyLog("info", "Syncing staging theme from source", {
+    sourceThemeId: sourceId,
+    targetThemeId: targetId,
+    changed: changed.length,
+    extras: extras.length,
+    unchanged: src.length - changed.length,
+  });
+
+  await copyAssetsWithDeferral(
+    sourceId,
+    targetId,
+    changed.map((a) => a.key),
+    ctx
+  );
+  for (const a of extras) {
+    await assetDelete(targetId, a.key, ctx);
+  }
+  return {
+    copied: changed.length,
+    deleted: extras.length,
+    unchanged: src.length - changed.length,
+  };
+}
+
 export interface StagingTheme {
   stagingThemeId: number;
   /** Merchant-reviewable URL: live storefront rendered with the staging theme. */
   previewUrl: string;
   /** The theme that was duplicated (the published theme unless overridden). */
   sourceThemeId: number;
+  /** True when an existing managed staging theme was reused (synced, not duplicated). */
+  reused?: boolean;
 }
+
+/**
+ * Names of managed staging themes start with this prefix. Reuse (below) matches
+ * on it, so every staging name the agent creates must keep the prefix stable.
+ */
+export const MANAGED_STAGING_PREFIX = "SchemaGen Staging";
 
 /**
  * Prepare a staging copy for the safe-edit flow: duplicate the published theme
  * (or an explicit `liveThemeId`) and return the staging id plus the
  * `?preview_theme_id=` URL the merchant reviews before themePublish() swaps it
  * live. The agent then writes ONLY to stagingThemeId.
+ *
+ * `reuse: true` (the fast path): when an UNPUBLISHED managed staging theme
+ * already exists on the shop, re-sync it from the source via checksum diff
+ * (seconds) instead of a full O(assets) duplicate (minutes, 429-heavy). A theme
+ * the agent previously PUBLISHED has role "main" and is never reused — it IS
+ * the source. If the sync fails partway the half-synced theme is deleted and
+ * the flow falls back to a clean full duplicate.
  */
 export async function prepareStagingTheme(
   liveThemeId: number | undefined,
   name: string,
-  ctx?: ShopContext
+  ctx?: ShopContext,
+  opts: { reuse?: boolean } = {}
 ): Promise<StagingTheme> {
   const themes = await themesList(ctx);
   const source =
@@ -234,12 +317,43 @@ export async function prepareStagingTheme(
         : "Cannot stage: no published (role \"main\") theme found on this shop"
     );
   }
+  const shop = ctx ? normalizeShop(ctx.shop) : getShopifyConfig().shop;
+  const outcome = (stagingId: number, reused: boolean): StagingTheme => ({
+    stagingThemeId: stagingId,
+    previewUrl: `https://${shop}/?preview_theme_id=${stagingId}`,
+    sourceThemeId: source.id,
+    reused,
+  });
+
+  if (opts.reuse) {
+    // Most recently updated first, so leftover older attempts age out unused.
+    const reusable = themes
+      .filter(
+        (t) =>
+          t.role !== "main" &&
+          t.id !== source.id &&
+          t.name.startsWith(MANAGED_STAGING_PREFIX)
+      )
+      .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))[0];
+    if (reusable) {
+      try {
+        await syncThemeAssets(source.id, reusable.id, ctx);
+        return outcome(reusable.id, true);
+      } catch (err) {
+        shopifyLog("warn", "Staging sync failed; falling back to full duplicate", {
+          stagingThemeId: reusable.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // A half-synced theme looks usable but isn't — remove it (best-effort).
+        try {
+          await themeDelete(reusable.id, ctx);
+        } catch {
+          /* leave it; the full duplicate below still yields a clean theme */
+        }
+      }
+    }
+  }
 
   const staging = await themeDuplicate(source.id, name, ctx);
-  const shop = ctx ? normalizeShop(ctx.shop) : getShopifyConfig().shop;
-  return {
-    stagingThemeId: staging.id,
-    previewUrl: `https://${shop}/?preview_theme_id=${staging.id}`,
-    sourceThemeId: source.id,
-  };
+  return outcome(staging.id, false);
 }

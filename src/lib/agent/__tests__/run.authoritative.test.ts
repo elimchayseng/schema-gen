@@ -79,7 +79,10 @@ const themesMock = vi.hoisted(() => ({
     async (): Promise<{ id: number; name: string; role: string }[]> => []
   ),
 }));
-vi.mock("@/lib/shopify/themes", () => themesMock);
+vi.mock("@/lib/shopify/themes", () => ({
+  ...themesMock,
+  MANAGED_STAGING_PREFIX: "SchemaGen Staging",
+}));
 
 vi.mock("@/lib/shopify/credentials", () => ({
   resolveShopContext: vi.fn(async () => ({

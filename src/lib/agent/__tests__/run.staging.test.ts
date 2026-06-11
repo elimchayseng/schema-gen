@@ -75,7 +75,10 @@ const themesMock = vi.hoisted(() => ({
   themeDelete: vi.fn(),
   themesList: vi.fn(),
 }));
-vi.mock("@/lib/shopify/themes", () => themesMock);
+vi.mock("@/lib/shopify/themes", () => ({
+  ...themesMock,
+  MANAGED_STAGING_PREFIX: "SchemaGen Staging",
+}));
 
 // Post-publish verification (post-publish.ts) — mocked so the publish path never
 // fetches the real storefront; its verdict drives the auto-rollback branches.

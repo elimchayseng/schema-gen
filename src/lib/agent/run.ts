@@ -17,6 +17,7 @@ import type { SnippetEntry } from "@/lib/shopify/snippet";
 import type { PageResult } from "@/lib/crawl/types";
 import { resolveShopContext } from "@/lib/shopify/credentials";
 import {
+  MANAGED_STAGING_PREFIX,
   prepareStagingTheme,
   themeDelete,
   themePublish,
@@ -353,10 +354,11 @@ function makeLiveVerify(
 /**
  * Name for the staging duplicate (issue #26). Date-stamped (day granularity) so a
  * merchant browsing Online Store → Themes can tell runs apart; tests assert the
- * stable prefix only, so the date never makes a test flaky.
+ * stable prefix only, so the date never makes a test flaky. The prefix is the
+ * managed-theme marker prepareStagingTheme's reuse path matches on.
  */
 function stagingThemeName(): string {
-  return `SchemaGen Staging ${new Date().toISOString().slice(0, 10)}`;
+  return `${MANAGED_STAGING_PREFIX} ${new Date().toISOString().slice(0, 10)}`;
 }
 
 /**
@@ -875,19 +877,21 @@ export async function runGoal(
         emit({
           phase: "stage",
           runId,
-          message: "duplicating the live theme — this can take a few minutes…",
+          message:
+            "preparing the staging theme (re-syncing an existing one takes seconds; a first-time duplicate can take a few minutes)…",
         });
         const prepared = await prepareStagingTheme(
           undefined,
           stagingThemeName(),
-          shopCtx ?? undefined
+          shopCtx ?? undefined,
+          { reuse: true }
         );
         staging = { ...prepared, published: false };
         emit({
           phase: "stage",
           runId,
           previewUrl: prepared.previewUrl,
-          message: `staging theme ${prepared.stagingThemeId} ready`,
+          message: `staging theme ${prepared.stagingThemeId} ready${prepared.reused ? " (reused — synced changed assets only)" : ""}`,
         });
       }
       emit({ phase: "apply", queued: applyItems.length });
