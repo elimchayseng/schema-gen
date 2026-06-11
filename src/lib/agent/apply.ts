@@ -102,6 +102,18 @@ export interface ApplyParams {
    * the legacy non-authoritative behavior byte-identical.
    */
   suppressions?: ApplySuppression[];
+  /**
+   * Optional step-observability hook (uniform step contract). Called around the
+   * envelope's checkpoints — "apply.backup", "apply.write", "apply.suppress",
+   * "apply.l4", "apply.rollback" — so the orchestrator can surface WHERE inside the
+   * atomic apply a run is. Best-effort: a throwing callback is swallowed and never
+   * alters the envelope's control flow.
+   */
+  onStep?: (
+    step: string,
+    status: "start" | "ok" | "fail" | "skip",
+    detail?: string
+  ) => void;
 }
 
 function action(
@@ -154,6 +166,13 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
   const { runId: _runId, themeId, items, ops, verify, persistBackup } = params;
   void _runId; // threaded for symmetry / future per-run backup keying
   const writeTarget = String(themeId);
+  const notify: NonNullable<ApplyParams["onStep"]> = (step, status, detail) => {
+    try {
+      params.onStep?.(step, status, detail);
+    } catch {
+      /* observability must never alter the envelope */
+    }
+  };
   const actions: ActionRecord[] = [];
   const suppressions = params.suppressions ?? [];
   // Suppressions requested → the post-write verify must run the duplicate-prevention
@@ -167,6 +186,7 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
 
   // 1. BACKUP — snapshot both footprint assets AND every suppression target BEFORE
   // the first write (one backup map; all of it is the rollback token).
+  notify("apply.backup", "start");
   const layoutBefore = await ops.get(themeId, LAYOUT_ASSET_KEY);
   if (layoutBefore === null) {
     // theme.liquid always exists on a real theme; its absence means a bad themeId.
@@ -190,6 +210,11 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
       await persistBackup(assetKey, before).catch(() => {});
     }
   }
+  notify(
+    "apply.backup",
+    "ok",
+    `${2 + suppressionBackups.size} asset(s) snapshotted`
+  );
 
   // 2+3. WRITE the footprint (snippet from ALL entries + idempotent include) then L4
   // verify each item's live render. Both a thrown write/verify error (network/500,
@@ -215,6 +240,7 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
   const suppressedAssets: string[] = [];
 
   try {
+    notify("apply.write", "start");
     await ops.put(themeId, SNIPPET_ASSET_KEY, snippet);
     const layoutAfter = upsertMarkerBlock(layoutBefore);
     if (layoutAfter !== layoutBefore) {
@@ -223,6 +249,7 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
     actions.push(
       action(items[0].url, "write", "footprint_written", { writeTarget })
     );
+    notify("apply.write", "ok", `${items.length} entr(y/ies) merged`);
 
     // 2b. SUPPRESS (issue #23) — silence each competing theme emission. Pure text
     // transform over the BACKED-UP value (no re-fetch; the backup is the source of
@@ -257,7 +284,19 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
         );
         continue;
       }
-      if (!res.changed) continue; // already suppressed (idempotent re-run) — no write
+      if (!res.changed) {
+        // Already suppressed (idempotent re-run on a reused staging theme) — no
+        // write, but RECORD it: the report derives "authoritative ran" from the
+        // presence of suppress rows, and a silent skip here made a published run
+        // claim the theme still emits competing schema (STATUS 2026-06-11 issue 3).
+        actions.push(
+          action(s.url ?? "", "suppress", `already_suppressed:${s.assetKey}`, {
+            writeTarget,
+          })
+        );
+        notify("apply.suppress", "skip", `${s.assetKey} (already suppressed)`);
+        continue;
+      }
       suppressedBefore.set(s.assetKey, before);
       await ops.put(themeId, s.assetKey, res.text);
       workingText.set(s.assetKey, res.text);
@@ -269,10 +308,17 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
           writeTarget,
         })
       );
+      notify("apply.suppress", "ok", s.assetKey);
     }
 
     for (const item of items) {
+      notify("apply.l4", "start", item.url);
       const result = await verify(item.url, item.entry, { unique });
+      notify(
+        "apply.l4",
+        result.passed ? "ok" : "fail",
+        result.passed ? item.url : `${item.url}: ${result.detail ?? "L4 failed"}`
+      );
       l4.push(result);
       actions.push(
         action(item.url, "verify", result.passed ? "l4_pass" : "l4_fail", {
@@ -298,6 +344,7 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
 
   // 4. ROLLBACK — atomic restore to byte-identical pre-run state. The footprint AND
   // every suppressed asset come back from the same backup map.
+  notify("apply.rollback", "start", failure.reason);
   try {
     await restoreFootprint(
       ops,
@@ -312,8 +359,10 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
     actions.push(
       action(failure.url, "rollback", `rollback_failed: ${msg}`, { writeTarget })
     );
+    notify("apply.rollback", "fail", msg);
     return { status: "paged", writeTarget, l4, actions, error: msg };
   }
+  notify("apply.rollback", "ok");
   // Name every restored suppressed asset in the audit (issue #23 requirement).
   for (const assetKey of suppressedBefore.keys()) {
     actions.push(

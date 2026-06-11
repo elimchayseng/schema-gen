@@ -58,6 +58,7 @@ import {
   finishRun,
   loadCommittedUrls,
   recordAction,
+  recordStep,
   saveResolvedUrls,
 } from "./audit";
 import { chunk, clampConcurrency } from "./concurrency";
@@ -549,7 +550,7 @@ async function buildSuppressionPlan(args: {
           );
           continue;
         }
-        const dedupe = `${res.assetKey} ${needle}`;
+        const dedupe = `${res.assetKey}\u0000${needle}`;
         if (seenSuppression.has(dedupe)) continue;
         seenSuppression.add(dedupe);
         suppressions.push({
@@ -577,7 +578,6 @@ export async function runGoal(
   const persistAudit = opts.persistAudit ?? true;
   const concurrency = clampConcurrency(opts.concurrency);
   const resume = opts.resume ?? true;
-  const judge = opts.judge ?? false;
   // Live-apply write strategy (issue #26). Default "env" = pre-staging behavior.
   const writeTheme: WriteThemeStrategy = opts.writeTheme ?? { mode: "env" };
   // Authoritative override (issue #23): defaults ON for whole-site goals only, so
@@ -623,6 +623,46 @@ export async function runGoal(
       warn("onProgress threw (continuing)", e);
     }
   };
+  // Uniform step contract: every named checkpoint goes through stepEvent, which
+  // emits on the progress sink AND persists to agent_runs.last_step — so the CLI
+  // (onProgress), the SSE UI, and the replay GET all agree on where the run is.
+  // recordStep swallows its own failures; the fire-and-forget here can never
+  // slow or abort the loop. NEVER name a step "done"/"error" (SSE terminal frames).
+  const stepEvent = (ev: AgentProgressEvent) => {
+    emit(ev);
+    if (runId) void recordStep(runId, ev);
+  };
+  const step = async <T>(
+    phase: AgentProgressEvent["phase"],
+    name: string,
+    fn: () => Promise<T>,
+    detail?: string
+  ): Promise<T> => {
+    const startedAt = Date.now();
+    stepEvent({ phase, runId, step: name, status: "start", ...(detail ? { detail } : {}) });
+    try {
+      const out = await fn();
+      stepEvent({
+        phase,
+        runId,
+        step: name,
+        status: "ok",
+        durationMs: Date.now() - startedAt,
+        ...(detail ? { detail } : {}),
+      });
+      return out;
+    } catch (e) {
+      stepEvent({
+        phase,
+        runId,
+        step: name,
+        status: "fail",
+        durationMs: Date.now() - startedAt,
+        detail: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
+    }
+  };
   // Cooperative cancellation. A thrown shouldHalt is treated as "not killed" (a transient
   // control-read error must not halt a healthy run; readControl already swallows its own).
   const killRequested = async (): Promise<boolean> => {
@@ -663,7 +703,9 @@ export async function runGoal(
     }
 
     // PERCEIVE — no LLM. A kill between batches stops here; nothing has been written.
-    let urls = await resolveTargetUrls(goal, siteRow);
+    let urls = await step("perceive", "perceive.resolve_urls", () =>
+      resolveTargetUrls(goal, siteRow)
+    );
 
     // Persist the resolved target list (issue #27) so the merchant report can compute
     // notReached exactly for any scope. Best-effort, like every other audit write.
@@ -745,8 +787,16 @@ export async function runGoal(
         killed = true;
         break;
       }
-      const scans = await Promise.all(
-        batch.map((u) => processPage(u, "scan", undefined, { fetchHeaders: headersFor(u) }))
+      const scans = await step(
+        "perceive",
+        "perceive.scan",
+        () =>
+          Promise.all(
+            batch.map((u) =>
+              processPage(u, "scan", undefined, { fetchHeaders: headersFor(u) })
+            )
+          ),
+        `${batch.length} page(s)`
       );
       for (let i = 0; i < batch.length; i++) {
         perceived.push(toPerceived(goal, batch[i], scans[i]));
@@ -767,10 +817,13 @@ export async function runGoal(
       const planned = planTasks(goal, perceived);
       skipped = [...committedSkipped, ...planned.skipped];
       satisfied.push(...planned.skipped);
-      emit({
+      stepEvent({
         phase: "plan",
+        step: "plan.queue",
+        status: "ok",
         queued: planned.queue.length,
         satisfied: satisfied.length,
+        detail: `${planned.queue.length} task(s) queued, ${planned.skipped.length} already satisfied`,
       });
       for (const url of planned.skipped) {
         await record({
@@ -793,9 +846,14 @@ export async function runGoal(
           killed = true;
           break;
         }
+        // Each page announces itself before the (slow, LLM-bound) batch executes, so
+        // a watcher always knows WHICH pages are in flight, not just how many landed.
+        for (const task of batch) {
+          stepEvent({ phase: "act", runId, step: "act.page", status: "start", url: task.url });
+        }
         const results = await Promise.all(
           batch.map((task) =>
-            executeTask(goal, task, { judge, fetchHeaders: headersFor(task.url) })
+            executeTask(goal, task, { fetchHeaders: headersFor(task.url) })
           )
         );
         let halted = false;
@@ -811,9 +869,11 @@ export async function runGoal(
           } else {
             unsatisfied.push(ex.url);
           }
-          emit({
+          stepEvent({
             phase: "act",
             url: ex.url,
+            step: "act.page",
+            status: ex.satisfied ? "ok" : "fail",
             gates: ex.action.gates,
             outcome: ex.action.outcome,
             // The repaired JSON-LD this page would inject — surfaced inline so the UI can
@@ -880,11 +940,10 @@ export async function runGoal(
           message:
             "preparing the staging theme (re-syncing an existing one takes seconds; a first-time duplicate can take a few minutes)…",
         });
-        const prepared = await prepareStagingTheme(
-          undefined,
-          stagingThemeName(),
-          shopCtx ?? undefined,
-          { reuse: true }
+        const prepared = await step("stage", "stage.prepare", () =>
+          prepareStagingTheme(undefined, stagingThemeName(), shopCtx ?? undefined, {
+            reuse: true,
+          })
         );
         staging = { ...prepared, published: false };
         emit({
@@ -908,12 +967,18 @@ export async function runGoal(
       // A plan failure here throws BEFORE the first write — fatal but safe.
       let suppressions: ApplySuppression[] = [];
       if (planPages.length > 0) {
-        const plan = await buildSuppressionPlan({
-          themeId,
-          pages: planPages,
-          target: goal.target,
-          ops: makeSourceLocatorOps(shopCtx ?? undefined),
-        });
+        const plan = await step(
+          "apply",
+          "apply.suppression_plan",
+          () =>
+            buildSuppressionPlan({
+              themeId,
+              pages: planPages,
+              target: goal.target,
+              ops: makeSourceLocatorOps(shopCtx ?? undefined),
+            }),
+          `${planPages.length} page(s)`
+        );
         suppressions = plan.suppressions;
         for (const row of plan.merchantRows) await record(row);
       }
@@ -933,6 +998,16 @@ export async function runGoal(
         persistBackup: (assetKey, valueBefore) =>
           backupRow(runId, shop, themeId, assetKey, valueBefore),
         ...(suppressions.length > 0 ? { suppressions } : {}),
+        // Surface the envelope's internal checkpoints (backup/write/suppress/L4/
+        // rollback) through the uniform step contract.
+        onStep: (name, status, detail) =>
+          stepEvent({
+            phase: "apply",
+            runId,
+            step: name,
+            status,
+            ...(detail ? { detail } : {}),
+          }),
       });
       for (const a of apply.actions) await record(a);
       // A rollback that itself failed pages the user — never thrash on the next run.
@@ -952,7 +1027,9 @@ export async function runGoal(
             message: `publishing staging theme ${staging.stagingThemeId}`,
           });
           try {
-            await themePublish(staging.stagingThemeId, shopCtx ?? undefined);
+            await step("publish", "publish.swap", () =>
+              themePublish(staging!.stagingThemeId, shopCtx ?? undefined)
+            );
             staging.published = true;
             staging.rollbackThemeId = staging.sourceThemeId;
             await record({
@@ -992,18 +1069,20 @@ export async function runGoal(
               message: "verifying the published storefront…",
             });
             try {
-              const pp = await postPublishVerify({
-                pages: applyItems.map((i) => ({
-                  url: i.url,
-                  expectBlocks: i.entry.jsonld,
-                  requirements: requirementsForTarget(goal.target, i.url),
-                })),
-                fetchHtml: makeAuthedPageFetcher(
-                  shop,
-                  shopCtx ? shopCtx.storefrontPassword : undefined
-                ),
-                unique: suppressions.length > 0,
-              });
+              const pp = await step("publish", "publish.post_verify", () =>
+                postPublishVerify({
+                  pages: applyItems.map((i) => ({
+                    url: i.url,
+                    expectBlocks: i.entry.jsonld,
+                    requirements: requirementsForTarget(goal.target, i.url),
+                  })),
+                  fetchHtml: makeAuthedPageFetcher(
+                    shop,
+                    shopCtx ? shopCtx.storefrontPassword : undefined
+                  ),
+                  unique: suppressions.length > 0,
+                })
+              );
               staging.postPublish = { status: pp.status, pages: pp.pages };
               await record({
                 url: applyItems[0]?.url ?? "",

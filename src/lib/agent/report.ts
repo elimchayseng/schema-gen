@@ -354,12 +354,20 @@ export function buildMerchantReport(
 
   for (const g of byUrl.values()) {
     const act = g.acts[g.acts.length - 1] ?? null;
-    const lastVerify = g.verifies[g.verifies.length - 1] ?? null;
-    const l4: { passed: boolean; detail?: string } | null = lastVerify
+    // The page's L4 verdict is the LAST l4_pass/l4_fail row. Post-publish
+    // verification rows share the action kind "verify" but are RUN-level evidence
+    // recorded against the first page's url — they must not displace that page's
+    // actual L4 verdict (observed live: every published run reported its first
+    // page as "previewed only" because post_publish:verified shadowed its l4_pass).
+    const l4Row =
+      [...g.verifies]
+        .reverse()
+        .find((v) => v.outcome === "l4_pass" || v.outcome === "l4_fail") ?? null;
+    const l4: { passed: boolean; detail?: string } | null = l4Row
       ? {
-          passed: lastVerify.outcome === "l4_pass",
-          ...(lastVerify.gates?.L4?.detail
-            ? { detail: lastVerify.gates.L4.detail }
+          passed: l4Row.outcome === "l4_pass",
+          ...(l4Row.gates?.L4?.detail
+            ? { detail: l4Row.gates.L4.detail }
             : {}),
         }
       : null;
@@ -449,7 +457,7 @@ export function buildMerchantReport(
       }
 
       if (l4?.passed) {
-        if (lastVerify?.write_target) publishTargets.add(lastVerify.write_target);
+        if (l4Row?.write_target) publishTargets.add(l4Row.write_target);
         pages.push({ ...base, disposition: kind, gates: buildGates(act.gates, l4) });
         continue;
       }
@@ -479,8 +487,8 @@ export function buildMerchantReport(
         googleTestUrl,
         ...(l4.passed ? {} : { failureReason: l4.detail ?? "Failed live verification" }),
       });
-      if (l4.passed && lastVerify?.write_target) {
-        publishTargets.add(lastVerify.write_target);
+      if (l4.passed && l4Row?.write_target) {
+        publishTargets.add(l4Row.write_target);
       }
     }
   }

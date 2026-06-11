@@ -17,6 +17,28 @@ import type {
   StagingOutcome,
 } from "@/lib/agent";
 
+/**
+ * The most recent agent_runs row for this site, fetched server-side by page.tsx so a
+ * remount (reload, navigation) shows where the last run ended instead of a blank form.
+ * `last_step` is the persisted uniform step checkpoint (migration 013) — null until
+ * the migration is applied or for runs predating it.
+ */
+export interface LastRun {
+  id: string;
+  status: string;
+  started_at: string | null;
+  ended_at: string | null;
+  error: string | null;
+  last_step?: {
+    phase?: string;
+    step?: string | null;
+    status?: string | null;
+    url?: string | null;
+    detail?: string | null;
+    at?: string | null;
+  } | null;
+}
+
 interface DoneSummary {
   status: string;
   killed: boolean;
@@ -238,12 +260,15 @@ export default function AgentRunner({
   siteId,
   domain,
   hasShopCredentials = false,
+  lastRun = null,
 }: {
   crawlId: string;
   siteId: string;
   domain: string;
   /** True when the site row carries shop_domain — unlocks the staging write modes. */
   hasShopCredentials?: boolean;
+  /** The site's most recent run, for the rehydrate-on-mount "Last run" card. */
+  lastRun?: LastRun | null;
 }) {
   const [scope, setScope] = useState<GoalScope>("all_products");
   const [writeMode, setWriteMode] = useState("env");
@@ -703,6 +728,52 @@ export default function AgentRunner({
         {error && (
           <div className="mt-4 rounded-md border border-error/30 bg-error-dim/20 px-4 py-3 text-sm text-error">
             {error}
+          </div>
+        )}
+
+        {/* Last run (rehydrate-on-mount): a remount wipes the in-memory result card,
+            but the run itself is durable — point back at it instead of a blank page. */}
+        {!running && !summary && !error && lastRun && (
+          <div className="mt-4 rounded-lg border border-border bg-surface-card p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-text-primary">Last run</h2>
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                  lastRun.status === "done"
+                    ? "bg-valid-dim/40 text-valid"
+                    : lastRun.status === "running"
+                      ? "bg-fix/20 text-fix-bright"
+                      : "bg-error-dim/20 text-error"
+                }`}
+              >
+                {lastRun.status}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-text-secondary">
+              {lastRun.ended_at
+                ? `Finished ${new Date(lastRun.ended_at).toLocaleString()}`
+                : lastRun.started_at
+                  ? `Started ${new Date(lastRun.started_at).toLocaleString()}`
+                  : ""}
+              {lastRun.last_step?.step && (
+                <>
+                  {" · last checkpoint: "}
+                  <span className="font-mono">
+                    {lastRun.last_step.step}
+                    {lastRun.last_step.status ? ` ${lastRun.last_step.status}` : ""}
+                  </span>
+                </>
+              )}
+              {lastRun.error && <span className="text-error"> · {lastRun.error}</span>}
+            </p>
+            <div className="mt-3">
+              <Link
+                href={`/site/${crawlId}/agent/report/${lastRun.id}`}
+                className="inline-block rounded-md bg-fix px-4 py-2 text-xs font-bold text-text-primary transition-all hover:bg-fix-bright"
+              >
+                View the full report →
+              </Link>
+            </div>
           </div>
         )}
 

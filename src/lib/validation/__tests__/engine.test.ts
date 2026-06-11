@@ -857,7 +857,10 @@ describe("Performance", () => {
         availability: "https://schema.org/InStock",
         itemCondition: "https://schema.org/NewCondition",
         url: "https://example.com/bag",
-        priceValidUntil: "2026-12-31",
+        // computed so the fixture never expires (a past date is now a validation error)
+        priceValidUntil: new Date(Date.now() + 365 * 24 * 3600 * 1000)
+          .toISOString()
+          .slice(0, 10),
         seller: {
           "@type": "Organization",
           name: "Luxury Retail",
@@ -875,6 +878,36 @@ describe("Performance", () => {
 // ============================================================
 // 15. Edge cases
 // ============================================================
+
+describe("priceValidUntil expiry (deterministic rule — the LLM is never a quality gate)", () => {
+  const offerWith = (priceValidUntil: string) => ({
+    "@context": "https://schema.org",
+    "@type": "Offer",
+    price: 9.99,
+    priceCurrency: "USD",
+    availability: "https://schema.org/InStock",
+    priceValidUntil,
+  });
+  const daysFromNow = (d: number) =>
+    new Date(Date.now() + d * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+  it("rejects a priceValidUntil in the past", () => {
+    const result = validateSchema(offerWith(daysFromNow(-1)));
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) => e.code === "EXPIRED_PRICE_VALID_UNTIL")
+    ).toBe(true);
+  });
+
+  it("accepts today and future dates", () => {
+    for (const d of [0, 1, 365]) {
+      const result = validateSchema(offerWith(daysFromNow(d)));
+      expect(
+        result.errors.some((e) => e.code === "EXPIRED_PRICE_VALID_UNTIL")
+      ).toBe(false);
+    }
+  });
+});
 
 describe("Edge cases", () => {
   it("55. Accepts http://schema.org as valid @context", () => {

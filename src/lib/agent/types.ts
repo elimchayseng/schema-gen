@@ -81,18 +81,12 @@ export interface GateResults {
    * for staged-but-not-applied pages (the live render doesn't exist yet).
    */
   L4?: GateResult | null;
-  /**
-   * L6 soft LLM judge (plan §6, Phase 5): "does this schema match the page's intent?".
-   * SOFT and informational ONLY — `gatesPassed` deliberately ignores it, so it can never
-   * block a commit. null/absent when the judge is disabled (the default) or unavailable.
-   */
-  L6?: GateResult | null;
 }
 
 /**
- * Pre-apply gate verdict (L0–L3). L4 and L6 are deliberately excluded: L4 can only be
- * evaluated AFTER a write (it fetches the live render) and is checked separately in the
- * apply path; L6 is a SOFT LLM judge that only logs and must never block a commit.
+ * Pre-apply gate verdict (L0–L3). L4 is deliberately excluded: it can only be
+ * evaluated AFTER a write (it fetches the live render) and is checked separately in
+ * the apply path.
  */
 export function gatesPassed(g: GateResults): boolean {
   return (
@@ -237,8 +231,7 @@ export type AgentPhase =
 
 /**
  * Cross-request control signal (agent_runs.control). "run" = continue.
- * "kill" halts at the next checkpoint (never mid-apply). "pause" is reserved for
- * Phase 5 durable pause/resume and is treated as "run" by Phase 4's loop.
+ * "kill" halts at the next checkpoint (never mid-apply).
  */
 export type HaltSignal = "run" | "kill";
 
@@ -284,6 +277,21 @@ export interface AgentProgressEvent {
   previewUrl?: string;
   /** Human-readable note, e.g. a breaker reason, "killed", or a staging/publish status. */
   message?: string;
+  /**
+   * Uniform step contract: a named checkpoint inside the phase (e.g. "perceive.scan",
+   * "apply.write", "publish.swap"). Every step emits status "start" then "ok"/"fail"
+   * (with durationMs); "skip" marks a checkpoint deliberately not run. The same event
+   * is persisted to agent_runs.last_step, so the CLI (onProgress), the SSE UI, and the
+   * replay GET all show one truth about where a run is.
+   *
+   * RESERVED: the SSE route uses top-level `step: "done"` / `step: "error"` as its
+   * terminal-frame discriminator — never name a progress step "done" or "error".
+   */
+  step?: string;
+  status?: "start" | "ok" | "fail" | "skip";
+  durationMs?: number;
+  /** Short step-scoped detail (an error message, a count, an asset key). */
+  detail?: string;
 }
 
 // ---- Run ----
@@ -390,12 +398,6 @@ export interface RunOptions {
    * resumed run never re-processes them. A fresh run has no such rows, so this is inert.
    */
   resume?: boolean;
-  /**
-   * Run the SOFT L6 LLM judge per acted page (Phase 5). Default false. When on, the
-   * judge's verdict is recorded as gates.L6 but NEVER affects pass/fail — it only logs.
-   * Off keeps the path inert (no extra LLM calls), so unit tests stay deterministic.
-   */
-  judge?: boolean;
   /**
    * Live-apply write target strategy (issues #25/#26). Default { mode: "env" } —
    * the pre-staging SHOPIFY_TEST_THEME_ID behavior. See WriteThemeStrategy.

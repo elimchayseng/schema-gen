@@ -463,3 +463,52 @@ describe("fixSchemaWithContext ordering (garnerandtow run-3 articles)", () => {
     ).toHaveLength(0);
   });
 });
+
+describe("expired priceValidUntil bump", () => {
+  const daysFromNow = (d: number) =>
+    new Date(Date.now() + d * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+  it("bumps a past priceValidUntil one year forward (deterministic, no model)", () => {
+    const result = fixSchema({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Wax",
+      offers: {
+        "@type": "Offer",
+        price: 9.99,
+        priceCurrency: "USD",
+        priceValidUntil: daysFromNow(-180),
+      },
+    });
+    const offers = (result.fixed as { offers: { priceValidUntil: string } }).offers;
+    expect(offers.priceValidUntil > daysFromNow(0)).toBe(true);
+    expect(
+      result.fixes.some((f) => f.code === "EXPIRED_PRICE_VALID_UNTIL")
+    ).toBe(true);
+    expect(
+      result.validationAfter.errors.some(
+        (e) => e.code === "EXPIRED_PRICE_VALID_UNTIL"
+      )
+    ).toBe(false);
+  });
+
+  it("leaves a future priceValidUntil untouched", () => {
+    const future = daysFromNow(30);
+    const result = fixSchema({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Wax",
+      offers: {
+        "@type": "Offer",
+        price: 9.99,
+        priceCurrency: "USD",
+        priceValidUntil: future,
+      },
+    });
+    const offers = (result.fixed as { offers: { priceValidUntil: string } }).offers;
+    expect(offers.priceValidUntil).toBe(future);
+    expect(
+      result.fixes.some((f) => f.code === "EXPIRED_PRICE_VALID_UNTIL")
+    ).toBe(false);
+  });
+});

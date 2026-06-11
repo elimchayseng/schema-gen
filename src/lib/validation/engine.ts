@@ -466,7 +466,28 @@ function validateDate(
       actualValue: value,
       expectedValue: "ISO 8601 date (e.g. 2026-01-15)",
     });
+    return;
   }
+  // priceValidUntil is a promise about the FUTURE: a past date is semantically
+  // expired (Google flags it) yet the LLM keeps emitting last year's date — seen
+  // live on every smoke run. Deterministic rule here (the LLM is never a quality
+  // gate); fixer.ts bumps it forward so the repair loop heals it without a model.
+  if (propDef.name === "priceValidUntil" && isPastDateOnly(value)) {
+    errors.push({
+      severity: "error",
+      path,
+      message: `'priceValidUntil' is in the past ("${value}") — the offer price promise has expired.`,
+      code: "EXPIRED_PRICE_VALID_UNTIL",
+      actualValue: value,
+      expectedValue: "a date >= today",
+    });
+  }
+}
+
+/** True when an ISO date(-time) string falls strictly before today (UTC, date-only). */
+function isPastDateOnly(value: string): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  return value.slice(0, 10) < today;
 }
 
 function validateTime(

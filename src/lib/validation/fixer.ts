@@ -238,6 +238,26 @@ function fixValue(
 ): void {
   if (value === undefined || value === null || value === "") return;
 
+  // Expired priceValidUntil: the LLM keeps emitting last year's date (seen live on
+  // every smoke run), which engine.ts rejects as EXPIRED_PRICE_VALID_UNTIL. Bump it
+  // one year past today — deterministic, so the repair loop heals it without a model.
+  if (
+    propDef.name === "priceValidUntil" &&
+    typeof value === "string" &&
+    !isNaN(Date.parse(value)) &&
+    value.slice(0, 10) < new Date().toISOString().slice(0, 10)
+  ) {
+    const bumped = new Date();
+    bumped.setUTCFullYear(bumped.getUTCFullYear() + 1);
+    container[key] = bumped.toISOString().slice(0, 10);
+    fixes.push({
+      path,
+      code: "EXPIRED_PRICE_VALID_UNTIL",
+      description: `Bumped expired 'priceValidUntil' (${value}) one year forward`,
+    });
+    return;
+  }
+
   // URL coercion: a URL-valued property (image, logo, url, …) given as an object
   // ({"@type":"ImageObject","url":…}) or an array of strings/objects is reduced to a
   // single URL string. Runs before the generic array handling so `image: [ImageObject]`

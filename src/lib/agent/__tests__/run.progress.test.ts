@@ -119,14 +119,20 @@ describe("runGoal progress streaming (Phase 4)", () => {
     const lastPerceiveIdx = phases.lastIndexOf("perceive");
     expect(planIdx).toBeGreaterThan(lastPerceiveIdx); // plan after perceive completes
     expect(firstActIdx).toBeGreaterThan(planIdx); // act after plan
-    expect(phases.filter((p) => p === "act")).toHaveLength(1); // one queued page (B)
+    // One queued page (B) = two act events under the uniform step contract:
+    // "act.page start" (page announced before the LLM batch) then the completion.
+    const acts = events.filter((e) => e.phase === "act");
+    expect(acts).toHaveLength(2);
+    expect(acts[0]?.status).toBe("start");
+    expect(acts[1]?.status).toBe("ok");
   });
 
   it("act events carry gate results and running counts", async () => {
     const events: AgentProgressEvent[] = [];
     await runGoal(goal, { persistAudit: false, onProgress: (e) => events.push(e) });
 
-    const act = events.find((e) => e.phase === "act");
+    // The completion event (status ok/fail) carries gates; the "start" one does not.
+    const act = events.find((e) => e.phase === "act" && e.status !== "start");
     expect(act?.url).toBe(B);
     expect(act?.gates).not.toBeNull();
     expect(act?.gates?.L1.passed).toBe(true);

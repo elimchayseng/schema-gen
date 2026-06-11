@@ -424,6 +424,57 @@ describe("buildMerchantReport", () => {
     expect(report.pages[0].disposition).toBe("fixed");
   });
 
+  it("a post_publish verify row on the first page never displaces its l4_pass (published-run regression)", () => {
+    // Mirrors the live offending run (0684d01a): run-level rows — footprint write,
+    // publish, post-publish verify — are recorded against the FIRST page's url. The
+    // post_publish:verified verify row used to shadow that page's l4_pass, making
+    // every published run report its first page as "previewed only".
+    const report = buildMerchantReport(makeRun(), [
+      actRow(PRODUCT_A, "fix"),
+      actRow(PRODUCT_B, "fix"),
+      row({ url: PRODUCT_A, action: "write", outcome: "footprint_written" }),
+      verifyRow(PRODUCT_A, true),
+      verifyRow(PRODUCT_B, true),
+      row({
+        url: PRODUCT_A,
+        action: "publish",
+        outcome: "published:185610797101 displaced:185626820653",
+        write_target: "185610797101",
+      }),
+      row({ url: PRODUCT_A, action: "verify", outcome: "post_publish:verified" }),
+    ]);
+    const pageA = report.pages.find((p) => p.url === PRODUCT_A);
+    expect(pageA?.disposition).toBe("fixed");
+    expect(pageA?.note ?? "").not.toContain("Previewed only");
+    expect(pageA?.gates.find((g) => g.level === "L4")?.passed).toBe(true);
+    expect(
+      report.requiredMerchantActions.some((a) => a.includes("Apply the run live"))
+    ).toBe(false);
+  });
+
+  it("already_suppressed rows count as authoritative (no generic duplicate warning on reused staging themes)", () => {
+    // On a REUSED staging theme the suppressions are already in place, so apply
+    // records already_suppressed:<asset> instead of writing. That still means
+    // SchemaGen owns the competing markup — the generic "your theme still emits
+    // the original structured data" action must not fire.
+    const report = buildMerchantReport(makeRun(), [
+      actRow(PRODUCT_A, "fix", "staged", {
+        schema_before: [{ "@type": "Product", name: "old" }],
+      }),
+      verifyRow(PRODUCT_A, true),
+      row({
+        url: PRODUCT_A,
+        action: "suppress",
+        outcome: "already_suppressed:sections/main-product.liquid",
+      }),
+    ]);
+    expect(
+      report.requiredMerchantActions.some((a) =>
+        a.includes("still emits the original structured data")
+      )
+    ).toBe(false);
+  });
+
   it("every gate carries its plain-English label in order L0..L4", () => {
     const report = buildMerchantReport(makeRun(), [
       actRow(PRODUCT_A, "fix"),
