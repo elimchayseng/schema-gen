@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-06-11T02:19:41.143Z",
+  "generatedAt": "2026-06-11T02:42:14.317Z",
   "report": {
-    "runId": "43ced13b-5367-4aa0-a392-0824fa873957",
+    "runId": "4a4385dd-d5e0-4d6a-b057-7c829eae2db4",
     "siteDomain": "ethan-dev-store-1.myshopify.com",
     "status": "done",
-    "startedAt": "2026-06-11T02:10:16.716+00:00",
-    "endedAt": "2026-06-11T02:19:40.827+00:00",
+    "startedAt": "2026-06-11T02:32:53.553+00:00",
+    "endedAt": "2026-06-11T02:42:14.146+00:00",
     "verdict": {
       "goodToGo": true,
       "headline": "You're good to go",
@@ -148,12 +148,12 @@
         "after": [
           {
             "url": "https://ethan-dev-store-1.myshopify.com/",
-            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766",
+            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/logo.png",
             "name": "ethan_dev_store_1",
             "@type": "Organization",
             "sameAs": [],
             "@context": "https://schema.org/",
-            "description": "Premium ecommerce store specializing in ski and snowboard equipment and accessories"
+            "description": "A premier online retailer offering quality products with exceptional customer service and fast shipping."
           },
           {
             "sku": "selling-plans-ski-wax",
@@ -166,10 +166,11 @@
               "@type": "Offer",
               "price": "24.95",
               "availability": "https://schema.org/InStock",
-              "priceCurrency": "USD"
+              "priceCurrency": "USD",
+              "priceValidUntil": "2025-12-31"
             },
             "@context": "https://schema.org/",
-            "description": "Premium ski wax available in multiple variants including golden yellow, purple, and cube formats. Ideal for maintaining and enhancing ski and snowboard performance."
+            "description": "Premium ski wax designed to enhance glide and protect your skis. Available in multiple formulations for different snow conditions. Perfect for maintaining optimal ski performance throughout the season."
           },
           {
             "url": "https://ethan-dev-store-1.myshopify.com",
@@ -359,12 +360,12 @@
         "after": [
           {
             "url": "https://ethan-dev-store-1.myshopify.com/",
-            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_b9e0da7f-db89-4d41-83f0-7f417b02831d.jpg?v=1780761766",
+            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/logo.png",
             "name": "ethan_dev_store_1",
             "@type": "Organization",
             "sameAs": [],
             "@context": "https://schema.org/",
-            "description": "Premium snowboard and winter sports equipment retailer"
+            "description": "ethan_dev_store_1 is an online store offering premium snowboards and winter sports equipment."
           },
           {
             "sku": "66832532832301",
@@ -380,12 +381,17 @@
               "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
               "@type": "Offer",
               "price": "2629.95",
+              "seller": {
+                "url": "https://ethan-dev-store-1.myshopify.com",
+                "name": "ethan_dev_store_1",
+                "@type": "Organization"
+              },
               "availability": "https://schema.org/OutOfStock",
               "priceCurrency": "USD",
               "priceValidUntil": "2025-12-31"
             },
             "@context": "https://schema.org/",
-            "description": "The 3p Fulfilled Snowboard is a premium snowboard featuring a distinctive hexagonal design pattern. Top and bottom view shows 7 stacked hexagons with a centered hexagonal logo for Hydrogen brand."
+            "description": "The 3p Fulfilled Snowboard is a high-performance snowboard featuring a distinctive hexagonal design pattern. Top and bottom view showcase 7 stacked hexagons with a centered hexagonal logo for Hydrogen brand."
           },
           {
             "url": "https://ethan-dev-store-1.myshopify.com",
@@ -795,8 +801,10 @@
       }
     ],
     "requiredMerchantActions": [
-      "Publish theme 185610043437 — the verified schema was applied to an unpublished (staged) theme and only reaches shoppers once that theme is published.",
-      "Your theme or an app still emits the original structured data on 3 pages. SchemaGen adds a corrected copy but cannot remove the app's version — disable that app's schema output to avoid duplicates."
+      "Publish theme 185610371117 — the verified schema was applied to an unpublished (staged) theme and only reaches shoppers once that theme is published.",
+      "An app injects Organization structured data on https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax that SchemaGen cannot remove via theme edits — disable that app's structured-data output to avoid duplicate markup.",
+      "An app injects Organization structured data on https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard that SchemaGen cannot remove via theme edits — disable that app's structured-data output to avoid duplicate markup.",
+      "An app injects Organization structured data on https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen that SchemaGen cannot remove via theme edits — disable that app's structured-data output to avoid duplicate markup."
     ],
     "proof": {
       "schemaGenLabel": "Validated by SchemaGen (deterministic gates L0–L4)",

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { repairToGoal, sanitizeCandidates } from "../repair";
+import { dedupeCandidatesByType, repairToGoal, sanitizeCandidates } from "../repair";
 import type { RefineFn } from "../repair";
 import { validateSchema } from "@/lib/validation/engine";
 
@@ -174,5 +174,54 @@ describe("repairToGoal — LLM repair path", () => {
     });
     expect(result.satisfied).toBe(false);
     expect(result.candidates[0]["@type"]).toBe("Product"); // unchanged
+  });
+});
+
+describe("dedupeCandidatesByType (dev-store duplicate-Product finding)", () => {
+  it("keeps exactly one candidate per primary type, preferring valid then newest", () => {
+    const oldProduct = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Old injected Product",
+      offers: { "@type": "Offer", price: 10, priceCurrency: "USD", availability: "https://schema.org/InStock" },
+    };
+    const newProduct = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Newly generated Product",
+      offers: { "@type": "Offer", price: 12, priceCurrency: "USD", availability: "https://schema.org/InStock" },
+    };
+    const invalidOrg = { "@context": "https://schema.org", "@type": "Organization", name: "x" }; // url missing
+    const validOrg = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "x",
+      url: "https://shop.test",
+    };
+    const breadcrumb = {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Home", item: "https://shop.test" },
+        { "@type": "ListItem", position: 2, name: "P", item: "https://shop.test/p" },
+      ],
+    };
+
+    const out = dedupeCandidatesByType([
+      oldProduct,
+      invalidOrg,
+      newProduct,
+      validOrg,
+      breadcrumb,
+    ] as Record<string, unknown>[]);
+
+    expect(out).toHaveLength(3);
+    const names = out.map((c) => (c as { name?: string }).name);
+    // Both Products are equally valid → the NEWEST (generated) wins.
+    expect(names).toContain("Newly generated Product");
+    expect(names).not.toContain("Old injected Product");
+    // The valid Organization beats the invalid one.
+    expect(out.some((c) => (c as { url?: string }).url === "https://shop.test")).toBe(true);
+    expect(out.some((c) => (c as { "@type"?: string })["@type"] === "BreadcrumbList")).toBe(true);
   });
 });

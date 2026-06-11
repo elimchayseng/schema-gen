@@ -54,6 +54,15 @@ export interface L4VerifyInput {
    * the exact rollback path an L4 failure does and GateResults/UI stay unchanged.
    */
   unique?: boolean;
+  /**
+   * Freshness proof: the exact JSON-LD value(s) this run staged for the page.
+   * When set, the rendered page must contain every member (canonical-JSON
+   * equality) before any other check counts — Shopify's Asset API is
+   * eventually consistent, so without this a STALE render that happens to be
+   * valid produces a false pass (observed live: the dup gate passed against
+   * the pre-write snippet render, then the real write propagated).
+   */
+  expectBlocks?: unknown;
 }
 
 /**
@@ -64,17 +73,45 @@ function rawDeclaresType(raw: string, type: string): boolean {
   return new RegExp(`"@type"\\s*:\\s*"${type.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`).test(raw);
 }
 
+/** Canonical JSON: stable key order at every depth, for value equality checks. */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v);
+}
+
 /** Evaluate one fetched HTML payload against the per-type requirements. Pure. */
 function verifyHtml(
   html: string,
   requirements: TypeRequirement[],
-  unique = false
+  unique = false,
+  expectBlocks?: unknown
 ): GateResult {
   const extracted = extractJsonLd(html);
   const unparseable = extracted.filter((e) => e.parseError || e.parsed === null);
   const live = extracted
     .filter((e) => !e.parseError && e.parsed !== null)
     .map((e) => e.parsed as Record<string, unknown>);
+
+  // FRESHNESS (stale-render guard): every staged block must already be in the
+  // render, by value. A miss is not a verdict on the schema — it means the
+  // Asset API hasn't propagated this write yet; the poll loop retries.
+  if (expectBlocks !== undefined) {
+    const liveCanon = new Set(live.map(canonicalJson));
+    const members = Array.isArray(expectBlocks) ? expectBlocks : [expectBlocks];
+    const missing = members.filter((m) => !liveCanon.has(canonicalJson(m)));
+    if (missing.length > 0) {
+      return fail(
+        `staged schema not yet in the live render (${missing.length}/${members.length} block(s) missing — likely still propagating)`
+      );
+    }
+  }
 
   if (live.length === 0) {
     return fail("no JSON-LD rendered on the live page");
@@ -168,7 +205,12 @@ export async function l4Verify(input: L4VerifyInput): Promise<GateResult> {
     }
 
     if (html) {
-      last = verifyHtml(html, requirements);
+      last = verifyHtml(
+        html,
+        requirements,
+        input.unique ?? false,
+        input.expectBlocks
+      );
       if (last.passed) return last;
     }
 

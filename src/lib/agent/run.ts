@@ -300,13 +300,16 @@ function makeLiveVerify(
   const passwordConfigured = () =>
     perSite ? storefrontPassword != null : isStorefrontPasswordConfigured();
 
-  return (url: string, _entry: SnippetEntry, ctx?: VerifyContext) => {
-    void _entry;
+  return (url: string, entry: SnippetEntry, ctx?: VerifyContext) => {
     const previewUrl = `${url}${url.includes("?") ? "&" : "?"}preview_theme_id=${themeId}`;
     // Per-page requirements (issue #28): L4 must demand exactly what L1/L2 demanded
     // for THIS page's type, not one global type set.
     const requirements = requirementsForTarget(target, url);
     return l4Verify({
+      // Freshness proof: the render must contain THIS run's staged blocks by
+      // value before any verdict counts — a stale (eventually-consistent)
+      // render that happens to validate must retry, not false-pass.
+      expectBlocks: entry.jsonld,
       url: previewUrl,
       requireTypes: requirements.map((r) => r.type),
       minOutcome: target.minOutcome,

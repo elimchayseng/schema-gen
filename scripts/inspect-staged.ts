@@ -4,7 +4,7 @@ import { getStorefrontCookie } from "../src/lib/shopify/storefront-password";
 import { fetchPage } from "../src/lib/url-validator/fetcher";
 import { validateSchema } from "../src/lib/validation/engine";
 
-const URL_ = "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax?preview_theme_id=185610043437";
+const URL_ = "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax?preview_theme_id=185610371117";
 
 async function main() {
   const cookie = await getStorefrontCookie("ethan-dev-store-1.myshopify.com");

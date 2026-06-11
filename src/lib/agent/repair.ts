@@ -96,6 +96,42 @@ export function sanitizeCandidates(
   return kept.length > 0 ? kept : candidates;
 }
 
+/**
+ * Exactly ONE candidate per primary @type. The pipeline merges the page's
+ * EXISTING valid schemas with newly generated ones, so a previously-injected
+ * Product plus a regenerated Product would both stage — and the live dup gate
+ * (issue #24) would then (rightly) roll the apply back. Deterministic
+ * preference per type: valid beats invalid, then fewer errors, then fewer
+ * warnings, then the LATER candidate (generated content is appended after
+ * carried-over existing schemas, so newest wins ties). Output preserves the
+ * original relative order of the winners.
+ */
+export function dedupeCandidatesByType(
+  candidates: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  const bestByType = new Map<string, number>(); // primary type -> candidate index
+  const scored = candidates.map((c) => {
+    const v = validateSchema(c);
+    return { valid: v.valid, errors: v.summary.errorCount, warnings: v.summary.warningCount };
+  });
+  const better = (a: number, b: number): boolean => {
+    const sa = scored[a];
+    const sb = scored[b];
+    if (sa.valid !== sb.valid) return sa.valid;
+    if (sa.errors !== sb.errors) return sa.errors < sb.errors;
+    if (sa.warnings !== sb.warnings) return sa.warnings < sb.warnings;
+    return a > b; // newest wins ties
+  };
+  candidates.forEach((c, i) => {
+    const primary = schemaTypesOf(c)[0];
+    if (!primary) return;
+    const cur = bestByType.get(primary);
+    if (cur === undefined || better(i, cur)) bestByType.set(primary, i);
+  });
+  const keep = new Set(bestByType.values());
+  return candidates.filter((c, i) => keep.has(i) || !schemaTypesOf(c)[0]);
+}
+
 /** Build the issue list for the LLM. Falls back to raw error text when the */
 /** fixer-handled filter would otherwise hide everything. */
 function buildIssueList(validation: ReturnType<typeof validateSchema>): string {
@@ -140,8 +176,10 @@ export async function repairToGoal(input: RepairInput): Promise<RepairResult> {
   // The required NAMES come from the per-type requirements when present.
   const requiredNames =
     input.requirements?.map((r) => r.type) ?? input.requireTypes;
-  const candidates = sanitizeCandidates(input.candidates, requiredNames).map(
-    (c) => fixSchemaWithContext(c, { pageUrl: input.url }).fixed
+  const candidates = dedupeCandidatesByType(
+    sanitizeCandidates(input.candidates, requiredNames).map(
+      (c) => fixSchemaWithContext(c, { pageUrl: input.url }).fixed
+    )
   );
 
   let gates = gate(input, candidates);
