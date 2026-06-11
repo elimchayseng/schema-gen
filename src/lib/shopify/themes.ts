@@ -98,12 +98,34 @@ export async function resolveWriteThemeId(
  * Note: asset-by-asset copy is O(assets) Admin API calls and rate-limited by
  * shopifyFetch's backoff — expect minutes, not seconds, on a real theme.
  */
+/**
+ * Copy order matters: Shopify VALIDATES on PUT, and a template/section-group
+ * that names a section type 422s unless that section file already exists on the
+ * target. Copy the referenced kinds first, the referencing kinds last.
+ */
+const ASSET_COPY_ORDER = [
+  "assets/",
+  "locales/",
+  "blocks/",
+  "snippets/",
+  "sections/",
+  "layout/",
+  "config/",
+  "templates/",
+];
+function assetCopyRank(key: string): number {
+  const i = ASSET_COPY_ORDER.findIndex((p) => key.startsWith(p));
+  return i === -1 ? ASSET_COPY_ORDER.length : i;
+}
+
 export async function themeDuplicate(
   themeId: number,
   name: string,
   ctx?: ShopContext
 ): Promise<ShopifyTheme> {
-  const sourceAssets = await assetsList(themeId, ctx);
+  const sourceAssets = [...(await assetsList(themeId, ctx))].sort(
+    (a, b) => assetCopyRank(a.key) - assetCopyRank(b.key)
+  );
   const target = await themeCreate(name, undefined, ctx);
   shopifyLog("info", "Duplicating theme", {
     sourceThemeId: themeId,
@@ -111,14 +133,59 @@ export async function themeDuplicate(
     assetCount: sourceAssets.length,
   });
   try {
-    for (const meta of sourceAssets) {
-      const full = await assetGet(themeId, meta.key, ctx);
+    const putOne = async (key: string): Promise<void> => {
+      const full = await assetGet(themeId, key, ctx);
       if (full.attachment != null) {
-        await assetPut(target.id, { key: meta.key, attachment: full.attachment }, ctx);
+        await assetPut(target.id, { key, attachment: full.attachment }, ctx);
       } else if (full.value != null) {
-        await assetPut(target.id, { key: meta.key, value: full.value }, ctx);
+        await assetPut(target.id, { key, value: full.value }, ctx);
       }
       // Assets with neither value nor attachment (shouldn't happen) are skipped.
+    };
+
+    // First pass in dependency-safe order; 422s (cross-asset references Shopify
+    // can't resolve yet) are deferred, anything else is fatal.
+    let deferred: string[] = [];
+    for (const meta of sourceAssets) {
+      try {
+        await putOne(meta.key);
+      } catch (e) {
+        if ((e as { status?: number }).status === 422) {
+          deferred.push(meta.key);
+        } else {
+          throw e;
+        }
+      }
+    }
+    // Retry deferred assets until a full pass makes no progress — each pass can
+    // only succeed where its dependencies landed in an earlier one.
+    while (deferred.length > 0) {
+      const stillFailing: string[] = [];
+      let lastErr: unknown = null;
+      for (const key of deferred) {
+        try {
+          await putOne(key);
+        } catch (e) {
+          if ((e as { status?: number }).status === 422) {
+            stillFailing.push(key);
+            lastErr = e;
+          } else {
+            throw e;
+          }
+        }
+      }
+      if (stillFailing.length === deferred.length) {
+        // No progress — the references are genuinely unsatisfiable.
+        throw lastErr instanceof Error
+          ? lastErr
+          : new Error(`theme duplicate: ${stillFailing.length} assets failed validation`);
+      }
+      shopifyLog("info", "Theme duplicate retry pass", {
+        targetThemeId: target.id,
+        resolved: deferred.length - stillFailing.length,
+        remaining: stillFailing.length,
+      });
+      deferred = stillFailing;
     }
   } catch (err) {
     // Never leave a half-copied staging theme behind — it looks usable but isn't.

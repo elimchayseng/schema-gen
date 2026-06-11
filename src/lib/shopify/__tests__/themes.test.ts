@@ -129,9 +129,11 @@ describe("themeDuplicate", () => {
     const staging = await themeDuplicate(100, "staging", ctx);
 
     expect(staging.id).toBe(300);
+    // Dependency-safe copy order: referenced kinds (assets/) land before
+    // referencing kinds (layout/) so Shopify's PUT-time validation passes.
     expect(puts).toEqual([
-      { asset: { key: "layout/theme.liquid", value: "<html>" } },
       { asset: { key: "assets/logo.png", attachment: "QkFTRTY0" } },
+      { asset: { key: "layout/theme.liquid", value: "<html>" } },
     ]);
     // Creation is explicitly unpublished — never a direct live write.
     expect(mockFetch).toHaveBeenCalledWith("/themes.json", {
