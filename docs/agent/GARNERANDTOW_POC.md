@@ -64,6 +64,25 @@ Run against the real duffel page, full loop with persistence:
    output carried `"Garner & Tow"`** (`outcome: staged, overrides:1`) — the
    sticky override wins over every future regeneration.
 
+## Live authoritative apply — proven on the dev store (2026-06-11)
+
+Three live staging applies against `ethan-dev-store-1.myshopify.com` (the store
+we hold credentials for), each one exposing and fixing a real trust gap:
+
+| Attempt | Found live | Fix |
+|---|---|---|
+| 1 | Theme duplication 422s — Shopify validates section references on PUT | dependency-ordered asset copy + deferred-422 retry passes |
+| 2 | Source locator classified the theme-native Product as ours (literal overlap = same product, not same origin); Horizon emits via `{{ product \| structured_data }}` with zero asset literals | exact-only schemagen classification + filter-emitter detection (the Liquid expression is the suppression needle) |
+| 3 | Staged entries carried existing + generated schema (two Products); the dup gate was wired into l4Verify but never enforced inside it; the eventually-consistent Asset API produced a stale-render false pass | per-type candidate dedup; gate enforced through verifyHtml; freshness proof — the render must contain THIS run's blocks by value before any verdict counts |
+
+**Final run (3b5b9b74):** status=done · 3/3 L4 passed · suppressed
+`sections/{featured-product,product-information,featured-product-information}.liquid`
+· staging theme 185610797101 verified via preview. Independent re-inspection of
+the staged product page: **exactly one valid Product, one BreadcrumbList, our
+Organization — and the one platform-injected Organization SchemaGen cannot
+remove, named precisely in the merchant report.** The published theme was never
+touched; publishing is one atomic swap away.
+
 ## What this proves / what remains
 
 **Proven, against the live store:** enumeration → classification → validation
