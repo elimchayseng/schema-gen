@@ -10,6 +10,7 @@ import { fetchPage } from "@/lib/url-validator/fetcher";
 import { createAdminClient } from "@/lib/supabase";
 import { getRichResultInfo } from "@/lib/validation/rich-results";
 import { typeSatisfies } from "@/lib/validation/schema-definitions";
+import { validateSchema } from "@/lib/validation/engine";
 import { renderSchemaGenSnippet, urlToTemplateTarget } from "@/lib/shopify/snippet";
 import { getShopifyConfig, normalizeShop } from "@/lib/shopify/config";
 import type { SnippetEntry } from "@/lib/shopify/snippet";
@@ -425,10 +426,14 @@ function pickContainsLiteral(
  *
  *   schemagen           → ours; never suppress.
  *   theme:<asset_key>   → COMPETES (declared type intersects the page's required
- *                         types, or the block is unparseable garbage) → suppression
- *                         {assetKey, match:{contains}, url}. Parsed-but-invalid
- *                         blocks of a NON-required type are left alone — they can't
- *                         trip the duplicate-prevention gate.
+ *                         types — subtype-aware — OR the block is unparseable OR
+ *                         parsed-but-invalid: under authoritative mode every
+ *                         broken theme emission is ours to silence, whatever its
+ *                         type) → suppression {assetKey, match:{contains}, url}.
+ *                         The locator's needle (the structured_data filter
+ *                         expression for render-time emissions) wins over the
+ *                         literal-overlap fallback, and co-emitting filter
+ *                         assets (alsoEmittedBy) are suppressed too.
  *   external / unknown  → not removable via theme edits → merchant_action row
  *                         `external_schema:<type|unparseable>:<url>` (deduped).
  *
@@ -490,13 +495,36 @@ async function buildSuppressionPlan(args: {
       const types = unparseable ? [] : blockSchemaTypes(block.parsed);
 
       if (res.source.startsWith("theme:") && res.assetKey) {
+        // Subtype-aware intersection, plus: any unparseable OR parsed-but-invalid
+        // theme block is competing markup — authoritative mode owns every broken
+        // theme emission, whatever its type (the dev-store ProductGroup case).
+        const invalid =
+          !unparseable &&
+          !validateSchema(block.parsed as Record<string, unknown>).valid;
         const competes =
-          unparseable || types.some((t) => requiredTypes.has(t));
+          unparseable ||
+          invalid ||
+          types.some((t) =>
+            [...requiredTypes].some((req) => typeSatisfies(t, req))
+          );
         if (!competes) continue;
-        const needle = pickContainsLiteral(
-          block.raw,
-          await getAssetText(res.assetKey)
-        );
+        // Co-emitting structured_data filter assets render the same competing
+        // markup from other sections — suppress them with their own expressions.
+        for (const extra of res.alsoEmittedBy ?? []) {
+          const k = `${extra.assetKey} ${extra.needle}`;
+          if (seenSuppression.has(k)) continue;
+          seenSuppression.add(k);
+          suppressions.push({
+            assetKey: extra.assetKey,
+            match: { contains: extra.needle },
+            url: page.url,
+          });
+        }
+        // The locator's needle (the filter expression living inside the emitting
+        // script element) beats literal-overlap needle selection.
+        const needle =
+          res.needle ??
+          pickContainsLiteral(block.raw, await getAssetText(res.assetKey));
         if (!needle) {
           merchantRow(
             page.url,

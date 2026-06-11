@@ -66,6 +66,19 @@ export interface SchemaSourceResult {
   confidence: SchemaSourceConfidence;
   /** Human-readable evidence for the classification (audit / report). */
   matchedBy: string;
+  /**
+   * The `contains` needle a suppression should use to find the emitting script
+   * element INSIDE the asset. Set for filter-based emissions (the Liquid
+   * expression, e.g. `{{ product | structured_data }}`), where the rendered
+   * block's literals never appear in the asset text.
+   */
+  needle?: string;
+  /**
+   * Other theme assets that emit the same kind of block via the structured_data
+   * filter. Authoritative mode suppresses these too — they are the same
+   * competing markup rendered from a different section.
+   */
+  alsoEmittedBy?: { assetKey: string; needle: string }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +107,45 @@ interface EmitterAsset {
   haystacks: string[];
   /** Whitespace-normalized haystacks, for verbatim containment checks. */
   normHaystacks: string[];
+  /**
+   * Shopify `| structured_data` filter expressions found in this asset. These
+   * emit complete JSON-LD AT RENDER TIME, so none of the rendered literals
+   * appear in the asset text — they are matched by OBJECT KIND instead
+   * (a `{{ product | structured_data }}` emits Product/ProductGroup, etc.).
+   */
+  filterExpressions: { expression: string; kind: FilterKind }[];
+}
+
+type FilterKind = "product" | "article" | "collection" | "other";
+
+const STRUCTURED_DATA_FILTER_RE = /\{\{[^{}]*\|\s*structured_data[^{}]*\}\}/g;
+
+function filterKindOf(expression: string): FilterKind {
+  const e = expression.toLowerCase();
+  if (e.includes("product")) return "product";
+  if (e.includes("article") || e.includes("blog")) return "article";
+  if (e.includes("collection")) return "collection";
+  return "other";
+}
+
+/** Schema types the structured_data filter emits per Liquid object kind. */
+const FILTER_KIND_TYPES: Record<FilterKind, string[]> = {
+  product: ["Product", "ProductGroup"],
+  article: ["Article", "BlogPosting", "NewsArticle"],
+  collection: ["CollectionPage", "ItemList"],
+  other: [],
+};
+
+/** The block's schema type kind, tolerant of unparseable raw text. */
+function blockFilterKind(block: RenderedJsonLdBlock): FilterKind | null {
+  const declares = (type: string): boolean =>
+    block.parsed != null
+      ? JSON.stringify(block.parsed).includes(`"${type}"`)
+      : new RegExp(`"@type"\\s*:\\s*"${type}"`).test(block.raw);
+  for (const kind of ["product", "article", "collection"] as const) {
+    if (FILTER_KIND_TYPES[kind].some(declares)) return kind;
+  }
+  return null;
 }
 
 function normalizeWs(s: string): string {
@@ -134,7 +186,11 @@ async function loadEmitters(
   for (const meta of plausible) {
     const full = await ops.assetGet(themeId, meta.key);
     const text = full.value;
-    if (text == null || !looksLikeSchemaEmitter(text)) continue;
+    if (text == null) continue;
+    const filterExpressions = (text.match(STRUCTURED_DATA_FILTER_RE) ?? []).map(
+      (expression) => ({ expression, kind: filterKindOf(expression) })
+    );
+    if (!looksLikeSchemaEmitter(text) && filterExpressions.length === 0) continue;
     const haystacks = [text];
     if (meta.key === SCHEMAGEN_SNIPPET_KEY) {
       const unescaped = unescapeSnippetJson(text);
@@ -144,6 +200,7 @@ async function loadEmitters(
       key: meta.key,
       haystacks,
       normHaystacks: haystacks.map(normalizeWs),
+      filterExpressions,
     });
   }
   byTheme.set(themeId, emitters);
@@ -324,23 +381,22 @@ function classifyBlock(
   //    bar count as candidates — overlap on universal scaffolding
   //    (`"@type"`, `"name"`, …) or a single short shared value is not
   //    evidence of emission (see isCandidate).
+  //
+  //    The schemagen snippet is EXCLUDED here: it describes the same products
+  //    the theme does, so a theme-native block shares most of its distinctive
+  //    literals (title, price, URLs) with our snippet. Fuzzy overlap with our
+  //    own snippet proves "same product", not "we emitted it" — only the
+  //    verbatim check above may classify a block as schemagen.
   const tokens = extractTokens(block.raw);
   const candidates = emitters
+    .filter((e) => e.key !== SCHEMAGEN_SNIPPET_KEY)
     .map((e) => scoreAsset(e, tokens))
     .filter(isCandidate)
     .sort((a, b) => b.score - a.score);
 
-  if (candidates.length === 0) {
-    return result(
-      block,
-      "external",
-      "none",
-      "no theme asset shares this block's static literals — app/ScriptTag injected"
-    );
-  }
-
   const [best, second] = candidates;
   const clearWinner =
+    best !== undefined &&
     best.score >= MIN_LIKELY_SCORE &&
     (second === undefined || best.score >= second.score * AMBIGUITY_LEAD);
 
@@ -353,6 +409,47 @@ function classifyBlock(
       `static-literal overlap with ${best.emitter.key} ` +
         `(${best.matchedCount}/${best.tokenCount} tokens, score ${best.score})`,
       assetKey
+    );
+  }
+
+  // 3. Filter-based emission: Shopify's `| structured_data` filter renders the
+  //    whole JSON-LD block at runtime, so NO literal overlap exists with the
+  //    emitting asset. Match by object kind instead: a Product/ProductGroup
+  //    block on a theme whose sections call `{{ … product … | structured_data }}`
+  //    came from one of those sections. The Liquid expression itself is the
+  //    suppression needle (it sits inside the emitting <script> element).
+  const kind = blockFilterKind(block);
+  if (kind) {
+    const filterEmitters = emitters
+      .filter((e) => e.filterExpressions.some((f) => f.kind === kind))
+      .map((e) => ({
+        assetKey: e.key,
+        needle: e.filterExpressions.find((f) => f.kind === kind)!.expression,
+      }))
+      .sort((a, b) => a.assetKey.localeCompare(b.assetKey));
+    if (filterEmitters.length > 0) {
+      const [first, ...rest] = filterEmitters;
+      return {
+        ...result(
+          block,
+          `theme:${first.assetKey}`,
+          "likely",
+          `structured_data filter emission (${kind}): ${first.needle} in ${first.assetKey}` +
+            (rest.length ? ` (+${rest.length} more emitters)` : ""),
+          first.assetKey
+        ),
+        needle: first.needle,
+        ...(rest.length ? { alsoEmittedBy: rest } : {}),
+      };
+    }
+  }
+
+  if (candidates.length === 0) {
+    return result(
+      block,
+      "external",
+      "none",
+      "no theme asset shares this block's static literals — app/ScriptTag injected"
     );
   }
 

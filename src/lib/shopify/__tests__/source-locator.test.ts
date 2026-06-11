@@ -389,3 +389,77 @@ describe("locateSchemaSources — asset fetching", () => {
     expect(second.fetched.length).toBeGreaterThan(0);
   });
 });
+
+describe("filter emissions + exact-only schemagen (dev-store live findings)", () => {
+  const PRODUCT_INFO = `<section>
+<script type="application/ld+json">
+  {{ closest.product | structured_data }}
+</script>
+</section>`;
+  const FEATURED = `<div>
+<script type="application/ld+json">
+  {{ section.settings.product | structured_data }}
+</script>
+</div>`;
+  // Our managed snippet describing THE SAME product — shares its distinctive
+  // literals (title, price, URL) with the theme-native block.
+  const SNIPPET = `{%- if template contains 'product' -%}
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Product","name":"Ski Wax Deluxe","offers":{"@type":"Offer","price":"24.95","url":"https://shop.test/products/ski-wax"}}
+</script>
+{%- endif -%}`;
+
+  function ops(assets: Record<string, string>) {
+    return {
+      assetsList: async () =>
+        Object.keys(assets).map((key) => ({ key }) as never),
+      assetGet: async (_t: number, key: string) =>
+        ({ key, value: assets[key] }) as never,
+    };
+  }
+
+  it("attributes a render-time filter emission to its section with the expression as needle", async () => {
+    // Theme-native Product: rendered by the structured_data filter, so NO
+    // literal overlap with any asset — previously misclassified as schemagen.
+    const themeNative = {
+      raw: '{"@context":"https://schema.org","@type":"Product","name":"Ski Wax Deluxe","offers":{"price":"24.95","url":"https://shop.test/products/ski-wax"}}',
+      parsed: { "@type": "Product", name: "Ski Wax Deluxe" },
+      position: 0,
+    };
+    const [res] = await locateSchemaSources({
+      themeId: 1,
+      renderedBlocks: [themeNative],
+      ops: ops({
+        "sections/product-information.liquid": PRODUCT_INFO,
+        "sections/featured-product.liquid": FEATURED,
+        [SCHEMAGEN_SNIPPET_KEY]: SNIPPET,
+      }),
+    });
+    expect(res.source).toBe("theme:sections/featured-product.liquid"); // alphabetical first
+    expect(res.needle).toBe("{{ section.settings.product | structured_data }}");
+    expect(res.alsoEmittedBy).toEqual([
+      {
+        assetKey: "sections/product-information.liquid",
+        needle: "{{ closest.product | structured_data }}",
+      },
+    ]);
+    expect(res.source).not.toBe("schemagen");
+  });
+
+  it("never classifies schemagen on fuzzy overlap — exact containment only", async () => {
+    // A block sharing most literals with our snippet (same product!) but not
+    // verbatim-contained in it, and no filter emitters of its kind around.
+    const lookalike = {
+      raw: '{"@type":"Organization","name":"Ski Wax Deluxe","url":"https://shop.test/products/ski-wax","logo":"x"}',
+      parsed: { "@type": "Organization", name: "Ski Wax Deluxe" },
+      position: 0,
+    };
+    const [res] = await locateSchemaSources({
+      themeId: 2,
+      renderedBlocks: [lookalike],
+      ops: ops({ [SCHEMAGEN_SNIPPET_KEY]: SNIPPET }),
+    });
+    expect(res.source).not.toBe("schemagen");
+    expect(res.source).toBe("external"); // no non-schemagen candidate at all
+  });
+});

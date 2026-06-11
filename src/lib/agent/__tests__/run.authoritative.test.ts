@@ -313,15 +313,79 @@ describe("runGoal authoritative mode (issue #23)", () => {
     expect(typeof passed.suppressions[0].match.contains).toBe("string");
   });
 
-  it("theme block of a NON-required type is left alone (can't trip the duplicate gate)", async () => {
-    renderedBlocks = [block("Organization")]; // not required on a product page
+  it("VALID theme block of a NON-required type is left alone (can't trip the duplicate gate)", async () => {
+    // A fully valid Organization (name + url — our quality bar) that isn't
+    // required on a product page: not competing, never suppressed.
+    const parsed = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "Legacy Shop",
+      url: "https://shop.com",
+    };
+    renderedBlocks = [{ raw: JSON.stringify(parsed), parsed, position: 0 }];
     locateMock.mockResolvedValue([themeResult("snippets/org-schema.liquid")]);
-    locatorMock.state.assetText = '{"@type":"Organization","name":"Legacy Product Title"}';
+    locatorMock.state.assetText = '{"@type":"Organization","name":"Legacy Shop"}';
 
     const result = await runGoal(siteGoal(), live);
 
     expect(applyMock.fn.mock.calls[0][0].suppressions).toBeUndefined();
     expect(result.actions.some((a) => a.action === "merchant_action")).toBe(false);
+  });
+
+  it("INVALID theme block of a NON-required type IS suppressed (authoritative owns broken markup)", async () => {
+    // The dev-store case: Horizon emits an invalid ProductGroup. Not a required
+    // type, but parsed-and-invalid theme markup is competing under authoritative.
+    renderedBlocks = [block("Organization")]; // name only → invalid (url missing)
+    locateMock.mockResolvedValue([themeResult("snippets/org-schema.liquid")]);
+    locatorMock.state.assetText = '{"@type":"Organization","name":"Legacy Product Title"}';
+
+    await runGoal(siteGoal(), live);
+
+    expect(applyMock.fn.mock.calls[0][0].suppressions).toEqual([
+      {
+        assetKey: "snippets/org-schema.liquid",
+        match: { contains: '"Legacy Product Title"' },
+        url: PRODUCT,
+      },
+    ]);
+  });
+
+  it("locator needle + alsoEmittedBy: filter emissions suppress every co-emitting section", async () => {
+    // Horizon-style: `{{ product | structured_data }}` — the locator supplies the
+    // Liquid expression as the needle and names the co-emitting sections.
+    renderedBlocks = [block("Product")];
+    locateMock.mockResolvedValue([
+      {
+        position: 0,
+        source: "theme:sections/product-information.liquid",
+        assetKey: "sections/product-information.liquid",
+        confidence: "likely",
+        matchedBy: "structured_data filter emission (product)",
+        needle: "{{ closest.product | structured_data }}",
+        alsoEmittedBy: [
+          {
+            assetKey: "sections/featured-product.liquid",
+            needle: "{{ section.settings.product | structured_data }}",
+          },
+        ],
+      },
+    ]);
+
+    await runGoal(siteGoal(), live);
+
+    const suppressions = applyMock.fn.mock.calls[0][0].suppressions;
+    expect(suppressions).toEqual([
+      {
+        assetKey: "sections/featured-product.liquid",
+        match: { contains: "{{ section.settings.product | structured_data }}" },
+        url: PRODUCT,
+      },
+      {
+        assetKey: "sections/product-information.liquid",
+        match: { contains: "{{ closest.product | structured_data }}" },
+        url: PRODUCT,
+      },
+    ]);
   });
 
   it("constraints.authoritative:false opts a site goal out — the locator never runs", async () => {
