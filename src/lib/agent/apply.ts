@@ -22,6 +22,8 @@
  * never touch the network. `makeShopifyOps()` wires the real Asset API for production.
  */
 import {
+  mergeSnippetEntries,
+  parseSchemaGenSnippet,
   renderSchemaGenSnippet,
   type SnippetEntry,
 } from "@/lib/shopify/snippet";
@@ -194,7 +196,17 @@ export async function applyEntries(params: ApplyParams): Promise<ApplyResult> {
   // missing </head> anchor) AND an L4 gate failure converge on the SAME rollback below,
   // so "backup before touch → restore on any failure" holds for write errors too — not
   // only gate failures. Atomic: stop at the first failure (the rest roll back anyway).
-  const snippet = renderSchemaGenSnippet(items.map((i) => i.entry));
+  //
+  // MERGE, never replace: the pre-run snippet (already in hand as the backup) carries
+  // the entries earlier runs wrote for OTHER pages. A run scoped to a subset of pages
+  // must not delete the rest of the store's schema — observed live: a 2-URL run wiped
+  // the third product's JSON-LD while the theme emitters stayed suppressed.
+  const snippet = renderSchemaGenSnippet(
+    mergeSnippetEntries(
+      snippetBefore ? parseSchemaGenSnippet(snippetBefore) : [],
+      items.map((i) => i.entry)
+    )
+  );
   const l4: (GateResult | null)[] = [];
   let failure: { url: string; reason: string } | null = null;
   // assetKey → ORIGINAL bytes for every suppression target whose write was ATTEMPTED

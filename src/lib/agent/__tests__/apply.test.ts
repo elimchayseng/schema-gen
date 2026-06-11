@@ -61,6 +61,41 @@ describe("applyEntries (in-place apply + atomic rollback)", () => {
     expect(r.actions.filter((a) => a.action === "verify")).toHaveLength(2);
   });
 
+  it("a subset run MERGES into the managed snippet — other pages' entries survive", async () => {
+    // Run 1 applies pages a + b.
+    const { ops, store } = makeMemoryTheme(seedLive);
+    await applyEntries({
+      runId: "run-1",
+      themeId: THEME_ID,
+      shop: "shop.myshopify.com",
+      items: [item("https://s/products/a"), item("https://s/products/b")],
+      ops,
+      verify: passVerify,
+    });
+
+    // Run 2 is scoped to page a only, with updated schema.
+    const updatedA: ApplyItem = {
+      url: "https://s/products/a",
+      entry: { template: "product", handle: "a", jsonld: { "@type": "Product", name: "a v2" } },
+    };
+    const r2 = await applyEntries({
+      runId: "run-2",
+      themeId: THEME_ID,
+      shop: "shop.myshopify.com",
+      items: [updatedA],
+      ops,
+      verify: passVerify,
+    });
+
+    expect(r2.status).toBe("applied");
+    const snippet = store.get(`${THEME_ID}:${SNIPPET_ASSET_KEY}`)!;
+    // Page a got the new schema; page b's entry was NOT deleted (the live
+    // regression: a 2-URL run wiped a third product's schema entirely).
+    expect(snippet).toContain('"a v2"');
+    expect(snippet).toContain("product.handle == 'b'");
+    expect(snippet).not.toContain('"name": "https://s/products/a"'); // old a replaced
+  });
+
   it("ACCEPTANCE: a non-rendering snippet fails L4 → rolls back BYTE-IDENTICAL", async () => {
     const { ops, store } = makeMemoryTheme(seedLive);
     const snapshot = new Map(store); // exact pre-apply bytes
