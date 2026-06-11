@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { runGoal, createRun, readControl, setControl } from "@/lib/agent";
+import { runGoal, createRun, readControl } from "@/lib/agent";
 import type {
   AgentProgressEvent,
   Goal,
@@ -19,7 +19,11 @@ import type {
  *
  * Cancellation: the control route writes agent_runs.control='kill'; runGoal polls it via
  * readControl at each checkpoint and stops BEFORE the atomic apply, so a kill never leaves
- * a half-written theme. The request's AbortSignal (client disconnect) is a secondary kill.
+ * a half-written theme. A TRANSPORT drop is deliberately NOT a kill: live runs outlast any
+ * single HTTP connection (Node's server.requestTimeout severs streamed responses at ~300s,
+ * observed live mid-theme-duplicate), so the run continues server-side and persists its
+ * result; the dashboard reconnects via GET /api/agent/run/[id] polling. Stopping a run is
+ * an explicit act (the Stop button → control route), never an inference from a dead socket.
  *
  * dryRun defaults to TRUE. Going live requires the body to explicitly send dryRun:false.
  */
@@ -192,6 +196,23 @@ export async function POST(request: Request) {
         }
       };
 
+      // HEARTBEAT — the run has long phases that emit no progress for minutes
+      // (theme duplicate is O(assets) Admin API calls; post-publish verification
+      // polls the storefront cache). An SSE connection with no bytes in flight
+      // gets idle-killed by the HTTP stack (observed live: the browser saw
+      // "fetch failed" mid-duplicate, the cancel hook killed the run, and a
+      // half-copied theme was orphaned). SSE comment lines (": …") are ignored
+      // by EventSource and skipped by the dashboard's parser, so this keeps the
+      // pipe warm without touching event semantics.
+      const heartbeat = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`: keepalive\n\n`));
+        } catch {
+          closed = true;
+        }
+      }, 15_000);
+
       try {
         const result = await runGoal(goal, {
           runId,
@@ -199,7 +220,9 @@ export async function POST(request: Request) {
           writeTheme,
           onProgress: (ev: AgentProgressEvent) => send({ ...ev }),
           shouldHalt: () => readControl(runId),
-          signal: request.signal,
+          // No request.signal: a dropped connection must not abort live Shopify
+          // work mid-flight (it orphaned a half-copied staging theme when it did).
+          // Kills are explicit via the control route only.
         });
 
         send({
@@ -228,6 +251,7 @@ export async function POST(request: Request) {
         });
       } finally {
         closed = true;
+        clearInterval(heartbeat);
         // On client disconnect the stream is already cancelled and close() throws;
         // swallow it so the async start() never rejects unhandled.
         try {
@@ -237,16 +261,10 @@ export async function POST(request: Request) {
         }
       }
     },
-    // Client disconnect → deterministically stop the run. request.signal is unreliable
-    // for streamed responses, so the cancel hook (the reliable disconnect signal) writes
-    // the DB control flag the loop polls. Best-effort; an already-finished run is a no-op.
-    async cancel() {
-      try {
-        await setControl(runId, "kill");
-      } catch {
-        /* best-effort */
-      }
-    },
+    // Client disconnect is NOT a kill (see header). The HTTP stack severs long
+    // streams (~300s requestTimeout) even with heartbeats flowing; killing here
+    // turned every long staging phase into a dead run. The run finishes and
+    // persists server-side; the dashboard resyncs by polling the control route.
   });
 
   return new Response(stream, {

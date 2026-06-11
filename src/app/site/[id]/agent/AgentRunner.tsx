@@ -270,20 +270,26 @@ export default function AgentRunner({
   const [detail, setDetail] = useState<DetailState>({ status: "idle" });
 
   const runIdRef = useRef<string | null>(null);
+  // True once a terminal stream event (done/error) arrived — distinguishes a clean
+  // finish from a severed connection that needs the poll fallback.
+  const terminalRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const requireTypesRef = useRef<HTMLInputElement | null>(null);
 
-  // Cancel the in-flight stream if the operator navigates away mid-run, so the fetch
-  // (and, via the route's cancel hook, the server-side run) doesn't dangle.
+  // Cancel the in-flight stream fetch if the operator navigates away mid-run. The
+  // server-side run deliberately continues (disconnect ≠ kill); its result persists
+  // and is visible in the report / run history.
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const handleEvent = useCallback((data: Record<string, unknown>) => {
     if (data.step === "done") {
+      terminalRef.current = true;
       setSummary(data as unknown as DoneSummary);
       setPhase("done");
       return;
     }
     if (data.step === "error") {
+      terminalRef.current = true;
       setError(String(data.error ?? "Run failed"));
       setPhase("done");
       return;
@@ -323,6 +329,67 @@ export default function AgentRunner({
     }
   }, []);
 
+  /**
+   * Poll fallback: the SSE connection died but the run is still going server-side
+   * (the HTTP stack severs long streams — Node's requestTimeout is ~300s — and a
+   * staging duplicate alone can take longer). The run row is the durable truth:
+   * poll it until terminal and synthesize a degraded done-state that points the
+   * operator at the full report instead of a dead "network error".
+   */
+  const pollUntilDone = useCallback(
+    async (id: string, runDryRun: boolean, ac: AbortController) => {
+      setStageInfo((prev) => ({
+        ...prev,
+        message:
+          "live connection dropped — the run is still going on the server; checking for the result…",
+      }));
+      const MAX_POLLS = 240; // 5s apart ≈ 20 minutes, far beyond any observed run
+      for (let i = 0; i < MAX_POLLS && !ac.signal.aborted; i++) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        let run: { status?: string; error?: string | null; pages_touched?: number | null } | null = null;
+        try {
+          const res = await fetch(`/api/agent/run/${id}`);
+          if (!res.ok) continue;
+          run = (await res.json()).run ?? null;
+        } catch {
+          continue; // transient — the run row will still be there next poll
+        }
+        if (!run?.status || run.status === "running") continue;
+        terminalRef.current = true;
+        if (run.status === "done") {
+          setSummary({
+            status: "done",
+            killed: false,
+            dryRun: runDryRun,
+            pagesTouched: run.pages_touched ?? 0,
+            satisfied: [],
+            unsatisfied: [],
+            skipped: [],
+            haltedBy: null,
+            stagedSnippet: null,
+            apply: null,
+            staging: null,
+          });
+          setStageInfo((prev) => ({
+            ...prev,
+            message:
+              "the run finished while disconnected — page-level results are in the full report below",
+          }));
+        } else {
+          setError(run.error ?? "Run failed");
+        }
+        setPhase("done");
+        return;
+      }
+      if (!ac.signal.aborted) {
+        setError(
+          "lost the live connection and the run hasn't finished — it may still be running; check the report page or run history"
+        );
+      }
+    },
+    []
+  );
+
   const startRun = useCallback(
     async (runDryRun: boolean) => {
       setRunning(true);
@@ -335,6 +402,7 @@ export default function AgentRunner({
       setDetail({ status: "idle" });
       setRunId(null);
       runIdRef.current = null;
+      terminalRef.current = false;
       setPhase(null);
       setStageInfo({});
       setCounts({ perceived: 0, queued: 0, acted: 0, satisfied: 0, unsatisfied: 0 });
@@ -381,14 +449,25 @@ export default function AgentRunner({
             }
           }
         }
+        // Stream ended without a terminal event: the connection was severed
+        // mid-run (not a failure of the run itself) — fall back to polling.
+        if (!terminalRef.current && runIdRef.current && !ac.signal.aborted) {
+          await pollUntilDone(runIdRef.current, runDryRun, ac);
+        }
       } catch (e) {
-        if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+        if (!ac.signal.aborted) {
+          if (!terminalRef.current && runIdRef.current) {
+            await pollUntilDone(runIdRef.current, runDryRun, ac);
+          } else {
+            setError(e instanceof Error ? e.message : String(e));
+          }
+        }
       } finally {
         if (abortRef.current === ac) abortRef.current = null;
         setRunning(false);
       }
     },
-    [siteId, scope, requireTypesInput, minOutcome, urlsInput, writeMode, handleEvent]
+    [siteId, scope, requireTypesInput, minOutcome, urlsInput, writeMode, handleEvent, pollUntilDone]
   );
 
   const kill = useCallback(async () => {
@@ -402,7 +481,7 @@ export default function AgentRunner({
         body: JSON.stringify({ control: "kill" }),
       });
     } catch {
-      // best-effort; the run loop will also stop on disconnect
+      // best-effort; the control flag is the only kill channel (disconnect ≠ kill)
     } finally {
       setKilling(false);
     }
