@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify": "npm run typecheck && npm run lint && npm run test"
+    "verify": "npm run typecheck && npm run lint && npm run test",
+    "smoke": "tsx --env-file=.env.local scripts/smoke-e2e.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
@@ -32,6 +33,7 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.1.0",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.0.0",
     "vitest": "^4.0.18"
   }
