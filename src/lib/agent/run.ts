@@ -33,6 +33,7 @@ import { planTasks } from "./planner";
 import { executeTask } from "./executor";
 import { hasCriticalIssue } from "./gates";
 import { l4Verify } from "./verify";
+import { postPublishVerify } from "./post-publish";
 import {
   applyEntries,
   makeShopifyOps,
@@ -265,27 +266,22 @@ function resolveWriteThemeId(): number {
 }
 
 /**
- * L4 verify wired to the real page fetcher. The staged (unpublished) theme is rendered
- * via Shopify's `?preview_theme_id=` param, so verification reads the exact bytes the
- * write produced, not the currently-published theme.
+ * Cookie-authenticated storefront page fetcher, shared by L4 verify and
+ * post-publish verification. Dev stores (and any store with the storefront
+ * password on) redirect every unauthenticated request to /password, so neither
+ * gate would ever see the rendered schema. The cookie is obtained once (when a
+ * password is configured) and sent on every fetch.
+ *
+ * `storefrontPassword`: per-site password (issue #25). `undefined` keeps the env
+ * behavior (SHOPIFY_STOREFRONT_PASSWORD); a string authenticates with THAT
+ * password; null means "per-site context with no password" — never fall back to
+ * the env one, storefront passwords are store-specific.
  */
-function makeLiveVerify(
-  target: GoalTarget,
-  themeId: number,
+function makeAuthedPageFetcher(
   shop: string,
-  /**
-   * Per-site storefront password (issue #25). `undefined` keeps the env behavior
-   * (SHOPIFY_STOREFRONT_PASSWORD); a string authenticates with THAT password; null
-   * means "per-site context with no password" — never fall back to the env one,
-   * storefront passwords are store-specific.
-   */
   storefrontPassword?: string | null
-) {
+): (url: string) => Promise<string> {
   const perSite = storefrontPassword !== undefined;
-  // Dev stores (and any store with the storefront password on) redirect every
-  // unauthenticated request to /password, so L4 would never see the rendered schema.
-  // Obtain the storefront_digest cookie once (when a password is configured)
-  // and send it on every verify fetch so the real page renders.
   let cookiePromise: Promise<string | null> | null = null;
   const getCookie = () => {
     if (!cookiePromise) {
@@ -299,6 +295,38 @@ function makeLiveVerify(
   };
   const passwordConfigured = () =>
     perSite ? storefrontPassword != null : isStorefrontPasswordConfigured();
+
+  return async (u: string) => {
+    const cookie = await getCookie();
+    const r = await fetchPage(u, cookie ? { headers: { Cookie: cookie } } : {});
+    if (r.error || !r.html) throw new Error(r.error ?? "empty response");
+    // Turn the silent "no JSON-LD rendered" rollback into an actionable cause when
+    // the storefront is password-gated and we couldn't authenticate past it.
+    if (looksPasswordGated(r.finalUrl, r.html)) {
+      throw new Error(
+        passwordConfigured()
+          ? perSite
+            ? "storefront is password-protected and the site's configured storefront password was rejected"
+            : "storefront is password-protected and the configured SHOPIFY_STOREFRONT_PASSWORD was rejected"
+          : "storefront is password-protected — set SHOPIFY_STOREFRONT_PASSWORD (Online Store → Preferences) or disable the storefront password so the live page can be verified"
+      );
+    }
+    return r.html;
+  };
+}
+
+/**
+ * L4 verify wired to the real page fetcher. The staged (unpublished) theme is rendered
+ * via Shopify's `?preview_theme_id=` param, so verification reads the exact bytes the
+ * write produced, not the currently-published theme.
+ */
+function makeLiveVerify(
+  target: GoalTarget,
+  themeId: number,
+  shop: string,
+  storefrontPassword?: string | null
+) {
+  const fetchHtml = makeAuthedPageFetcher(shop, storefrontPassword);
 
   return (url: string, entry: SnippetEntry, ctx?: VerifyContext) => {
     const previewUrl = `${url}${url.includes("?") ? "&" : "?"}preview_theme_id=${themeId}`;
@@ -317,23 +345,7 @@ function makeLiveVerify(
       // Duplicate-prevention gate (issue #24): on whenever the apply carries
       // suppressions — apply.ts sets ctx.unique, we just forward it.
       unique: ctx?.unique ?? false,
-      fetchHtml: async (u) => {
-        const cookie = await getCookie();
-        const r = await fetchPage(u, cookie ? { headers: { Cookie: cookie } } : {});
-        if (r.error || !r.html) throw new Error(r.error ?? "empty response");
-        // Turn the silent "no JSON-LD rendered" rollback into an actionable cause when
-        // the storefront is password-gated and we couldn't authenticate past it.
-        if (looksPasswordGated(r.finalUrl, r.html)) {
-          throw new Error(
-            passwordConfigured()
-              ? perSite
-                ? "storefront is password-protected and the site's configured storefront password was rejected"
-                : "storefront is password-protected and the configured SHOPIFY_STOREFRONT_PASSWORD was rejected"
-              : "storefront is password-protected — set SHOPIFY_STOREFRONT_PASSWORD (Online Store → Preferences) or disable the storefront password so the live page can be verified"
-          );
-        }
-        return r.html;
-      },
+      fetchHtml,
     });
   };
 }
@@ -962,6 +974,98 @@ export async function runGoal(
               writeTarget: String(staging.stagingThemeId),
             });
           }
+
+          // POST-PUBLISH VERIFICATION — L4 proved the staging theme via its preview
+          // render; this proves what shoppers and Google actually get. The freshness
+          // proof separates a not-yet-converged page cache (stale — publish stands)
+          // from a genuinely wrong published render (failed — auto-rollback by
+          // republishing the displaced theme). Crashing here must never undo a
+          // publish on zero evidence, hence the outer try.
+          if (staging.published) {
+            emit({
+              phase: "publish",
+              runId,
+              message: "verifying the published storefront…",
+            });
+            try {
+              const pp = await postPublishVerify({
+                pages: applyItems.map((i) => ({
+                  url: i.url,
+                  expectBlocks: i.entry.jsonld,
+                  requirements: requirementsForTarget(goal.target, i.url),
+                })),
+                fetchHtml: makeAuthedPageFetcher(
+                  shop,
+                  shopCtx ? shopCtx.storefrontPassword : undefined
+                ),
+                unique: suppressions.length > 0,
+              });
+              staging.postPublish = { status: pp.status, pages: pp.pages };
+              await record({
+                url: applyItems[0]?.url ?? "",
+                action: "verify",
+                schemaBefore: null,
+                schemaAfter: null,
+                gates: null,
+                outcome: `post_publish:${pp.status}`,
+                writeTarget: String(staging.stagingThemeId),
+              });
+
+              if (pp.status === "failed") {
+                // Definite bad published render — undo the swap. The staging theme
+                // is kept (unpublished) as the evidence of what failed.
+                try {
+                  await themePublish(staging.sourceThemeId, shopCtx ?? undefined);
+                  staging.published = false;
+                  staging.postPublish.rolledBack = true;
+                  await record({
+                    url: applyItems[0]?.url ?? "",
+                    action: "rollback",
+                    schemaBefore: null,
+                    schemaAfter: null,
+                    gates: null,
+                    outcome: `post_publish_rollback:republished:${staging.sourceThemeId}`,
+                    writeTarget: String(staging.sourceThemeId),
+                  });
+                } catch (e) {
+                  // The bad theme is live and the automatic undo failed — page the
+                  // human with the exact theme to republish by hand.
+                  staging.postPublish.rolledBack = false;
+                  warn("post-publish rollback (republish) failed", e);
+                  await record({
+                    url: applyItems[0]?.url ?? "",
+                    action: "merchant_action",
+                    schemaBefore: null,
+                    schemaAfter: null,
+                    gates: null,
+                    outcome: `post_publish_rollback_failed:republish_theme:${staging.sourceThemeId}:${e instanceof Error ? e.message : String(e)}`,
+                    writeTarget: String(staging.sourceThemeId),
+                  });
+                }
+              }
+              emit({
+                phase: "publish",
+                runId,
+                message: `post-publish verification: ${pp.status}`,
+              });
+            } catch (e) {
+              // Verifier crash ≠ bad render: report, don't roll back.
+              warn("post-publish verification errored (publish stands)", e);
+              staging.postPublish = {
+                status: "stale",
+                pages: [],
+              };
+              await record({
+                url: applyItems[0]?.url ?? "",
+                action: "verify",
+                schemaBefore: null,
+                schemaAfter: null,
+                gates: null,
+                outcome: `post_publish:error:${e instanceof Error ? e.message : String(e)}`,
+                writeTarget: String(staging.stagingThemeId),
+              });
+            }
+          }
         } else if (apply.status === "rolled_back") {
           // The rollback restored the duplicate byte-identical, so it holds no
           // evidence — delete it (best-effort) so failed runs don't pile up themes.
@@ -1004,6 +1108,10 @@ export async function runGoal(
     let status: RunResult["status"];
     if (apply && apply.status !== "applied") {
       status = apply.status === "paged" ? "paged" : "rolled_back";
+    } else if (staging?.postPublish?.status === "failed") {
+      // Published render was wrong: rolled_back when the displaced theme was
+      // republished cleanly; paged when even that failed (bad theme still live).
+      status = staging.postPublish.rolledBack ? "rolled_back" : "paged";
     } else {
       status = ranClean ? "done" : "failed";
     }
@@ -1011,11 +1119,15 @@ export async function runGoal(
     const error =
       apply?.status === "paged"
         ? `rollback failed; theme left dirty: ${apply.error ?? "unknown"}`
-        : killed
-          ? "run killed by control signal"
-          : haltedBy
-            ? `halted by circuit breaker: ${haltedBy}`
-            : null;
+        : staging?.postPublish?.status === "failed"
+          ? staging.postPublish.rolledBack
+            ? "post-publish verification failed; the displaced theme was republished"
+            : `post-publish verification failed AND the rollback republish failed — manually republish theme ${staging.sourceThemeId}`
+          : killed
+            ? "run killed by control signal"
+            : haltedBy
+              ? `halted by circuit breaker: ${haltedBy}`
+              : null;
 
     if (runId) {
       try {

@@ -77,6 +77,11 @@ const themesMock = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/shopify/themes", () => themesMock);
 
+// Post-publish verification (post-publish.ts) — mocked so the publish path never
+// fetches the real storefront; its verdict drives the auto-rollback branches.
+const postPublishMock = vi.hoisted(() => ({ fn: vi.fn() }));
+vi.mock("../post-publish", () => ({ postPublishVerify: postPublishMock.fn }));
+
 // Per-site credentials (issue #25) — resolved once, threaded into every theme call.
 const credsMock = vi.hoisted(() => ({
   resolveShopContext: vi.fn(async () => ({
@@ -174,6 +179,13 @@ beforeEach(() => {
   themesMock.themePublish.mockResolvedValue(undefined);
   themesMock.themeDelete.mockResolvedValue(undefined);
   themesMock.themesList.mockResolvedValue([]);
+  postPublishMock.fn.mockResolvedValue({
+    status: "verified",
+    pages: [
+      { url: P1, status: "pass", attempts: 1 },
+      { url: P2, status: "pass", attempts: 1 },
+    ],
+  });
   process.env.SHOPIFY_TEST_THEME_ID = "999";
 });
 
@@ -202,6 +214,18 @@ describe("runGoal staging write strategy (issue #26)", () => {
     expect(result.staging?.published).toBe(true);
     expect(result.staging?.rollbackThemeId).toBe(SOURCE_ID);
     expect(result.staging?.stagingThemeId).toBe(STAGING_ID);
+
+    // Post-publish verification ran against the REAL urls with the staged blocks
+    // as the freshness proof, and its verdict landed on the staging outcome.
+    expect(postPublishMock.fn).toHaveBeenCalledTimes(1);
+    const ppInput = postPublishMock.fn.mock.calls[0][0];
+    expect(ppInput.pages.map((p: { url: string }) => p.url)).toEqual([P1, P2]);
+    expect(ppInput.pages[0].expectBlocks).toBeDefined();
+    expect(result.staging?.postPublish?.status).toBe("verified");
+    const ppRow = result.actions.find(
+      (a) => a.action === "verify" && a.outcome === "post_publish:verified"
+    );
+    expect(ppRow).toBeDefined();
 
     // Progress: the preview URL goes out on "stage" the moment the duplicate exists,
     // and the swap announces itself on "publish".
@@ -288,6 +312,114 @@ describe("runGoal staging write strategy (issue #26)", () => {
     expect(result.staging?.published).toBe(false);
     // The verified staging theme is intact — never deleted on a failed swap.
     expect(themesMock.themeDelete).not.toHaveBeenCalled();
+    // Nothing went live, so there is nothing to post-publish verify.
+    expect(postPublishMock.fn).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  it("post-publish FAILED: the displaced theme is republished (auto-rollback), run is rolled_back", async () => {
+    postPublishMock.fn.mockResolvedValue({
+      status: "failed",
+      pages: [
+        { url: P1, status: "fail", detail: "duplicate schema: 2 valid 'Product' blocks", attempts: 1 },
+        { url: P2, status: "pass", attempts: 1 },
+      ],
+    });
+
+    const result = await runGoal(goal, {
+      dryRun: false,
+      persistAudit: false,
+      writeTheme: { mode: "staging", publish: true },
+    });
+
+    // First publish swapped staging live; the rollback republished the SOURCE.
+    expect(themesMock.themePublish).toHaveBeenCalledTimes(2);
+    expect(themesMock.themePublish.mock.calls[0][0]).toBe(STAGING_ID);
+    expect(themesMock.themePublish.mock.calls[1][0]).toBe(SOURCE_ID);
+
+    expect(result.status).toBe("rolled_back");
+    expect(result.staging?.published).toBe(false);
+    expect(result.staging?.postPublish?.status).toBe("failed");
+    expect(result.staging?.postPublish?.rolledBack).toBe(true);
+    const rb = result.actions.find(
+      (a) => a.action === "rollback" && a.outcome.startsWith("post_publish_rollback:")
+    );
+    expect(rb?.outcome).toContain(String(SOURCE_ID));
+    // The failing staging theme is evidence — never deleted.
+    expect(themesMock.themeDelete).not.toHaveBeenCalled();
+  });
+
+  it("post-publish FAILED and the republish also fails: paged, merchant told which theme to publish", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    postPublishMock.fn.mockResolvedValue({
+      status: "failed",
+      pages: [{ url: P1, status: "fail", detail: "no valid 'Product'", attempts: 2 }],
+    });
+    themesMock.themePublish
+      .mockResolvedValueOnce(undefined) // the swap itself succeeds
+      .mockRejectedValueOnce(new Error("republish 500")); // the undo fails
+
+    const result = await runGoal(goal, {
+      dryRun: false,
+      persistAudit: false,
+      writeTheme: { mode: "staging", publish: true },
+    });
+
+    expect(result.status).toBe("paged");
+    expect(result.staging?.postPublish?.rolledBack).toBe(false);
+    const row = result.actions.find(
+      (a) => a.action === "merchant_action" && a.outcome.startsWith("post_publish_rollback_failed:")
+    );
+    expect(row?.outcome).toContain(String(SOURCE_ID));
+    warnSpy.mockRestore();
+  });
+
+  it("post-publish STALE (cache didn't converge): publish stands, run is done, verdict surfaced", async () => {
+    postPublishMock.fn.mockResolvedValue({
+      status: "stale",
+      pages: [{ url: P1, status: "stale", detail: "cache did not converge", attempts: 12 }],
+    });
+
+    const result = await runGoal(goal, {
+      dryRun: false,
+      persistAudit: false,
+      writeTheme: { mode: "staging", publish: true },
+    });
+
+    // Inconclusive is NOT failure: no republish, the swap stands.
+    expect(themesMock.themePublish).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("done");
+    expect(result.staging?.published).toBe(true);
+    expect(result.staging?.postPublish?.status).toBe("stale");
+  });
+
+  it("post-publish verifier crash: publish stands (no rollback on zero evidence)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    postPublishMock.fn.mockRejectedValue(new Error("verifier exploded"));
+
+    const result = await runGoal(goal, {
+      dryRun: false,
+      persistAudit: false,
+      writeTheme: { mode: "staging", publish: true },
+    });
+
+    expect(themesMock.themePublish).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("done");
+    expect(result.staging?.published).toBe(true);
+    expect(result.staging?.postPublish?.status).toBe("stale");
+    const row = result.actions.find(
+      (a) => a.action === "verify" && a.outcome.startsWith("post_publish:error:")
+    );
+    expect(row?.outcome).toContain("verifier exploded");
+    warnSpy.mockRestore();
+  });
+
+  it("publish:false: post-publish verification never runs", async () => {
+    await runGoal(goal, {
+      dryRun: false,
+      persistAudit: false,
+      writeTheme: { mode: "staging", publish: false },
+    });
+    expect(postPublishMock.fn).not.toHaveBeenCalled();
   });
 });

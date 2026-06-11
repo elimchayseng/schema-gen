@@ -306,6 +306,30 @@ export type WriteThemeStrategy =
   | { mode: "env" }
   | { mode: "staging"; publish: boolean };
 
+/**
+ * Outcome of post-publish verification (post-publish.ts): the touched pages
+ * re-verified at their REAL urls after themePublish, with the freshness proof
+ * separating "Shopify's page cache hasn't converged" (stale — publish stands,
+ * re-check later) from "the published render is genuinely wrong" (failed — the
+ * displaced theme is auto-republished).
+ */
+export interface PostPublishOutcome {
+  status: "verified" | "stale" | "failed";
+  /** Per-page verdicts, in apply order. */
+  pages: Array<{
+    url: string;
+    status: "pass" | "stale" | "fail";
+    detail?: string;
+    attempts: number;
+  }>;
+  /**
+   * Only meaningful when status="failed": true — the displaced theme was
+   * republished (clean auto-rollback); false — the republish itself failed and
+   * a human must publish the rollback theme by hand (run status "paged").
+   */
+  rolledBack?: boolean;
+}
+
 /** What the staging flow produced (RunResult.staging; null/absent outside staging mode). */
 export interface StagingOutcome {
   stagingThemeId: number;
@@ -322,6 +346,8 @@ export interface StagingOutcome {
   rollbackThemeId?: number;
   /** True when a failed run deleted the staging duplicate (best-effort cleanup). */
   deleted?: boolean;
+  /** Post-publish verification verdict (only set when the theme was published). */
+  postPublish?: PostPublishOutcome;
 }
 
 export interface RunOptions {

@@ -86,13 +86,22 @@ function canonicalJson(v: unknown): string {
   return JSON.stringify(v);
 }
 
+/**
+ * A GateResult whose failure may be a freshness miss rather than a verdict:
+ * `stale: true` means the staged blocks aren't in the render yet (old cached/
+ * unpropagated HTML) — the page can't be judged, only re-polled. Post-publish
+ * verification (post-publish.ts) branches on this to tell "cache hasn't
+ * converged" apart from "the new theme genuinely renders wrong".
+ */
+export type RenderVerdict = GateResult & { stale?: boolean };
+
 /** Evaluate one fetched HTML payload against the per-type requirements. Pure. */
-function verifyHtml(
+export function verifyRenderedHtml(
   html: string,
   requirements: TypeRequirement[],
   unique = false,
   expectBlocks?: unknown
-): GateResult {
+): RenderVerdict {
   const extracted = extractJsonLd(html);
   const unparseable = extracted.filter((e) => e.parseError || e.parsed === null);
   const live = extracted
@@ -107,9 +116,11 @@ function verifyHtml(
     const members = Array.isArray(expectBlocks) ? expectBlocks : [expectBlocks];
     const missing = members.filter((m) => !liveCanon.has(canonicalJson(m)));
     if (missing.length > 0) {
-      return fail(
-        `staged schema not yet in the live render (${missing.length}/${members.length} block(s) missing — likely still propagating)`
-      );
+      return {
+        passed: false,
+        stale: true,
+        detail: `staged schema not yet in the live render (${missing.length}/${members.length} block(s) missing — likely still propagating)`,
+      };
     }
   }
 
@@ -205,7 +216,7 @@ export async function l4Verify(input: L4VerifyInput): Promise<GateResult> {
     }
 
     if (html) {
-      last = verifyHtml(
+      last = verifyRenderedHtml(
         html,
         requirements,
         input.unique ?? false,
