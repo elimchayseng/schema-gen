@@ -36,10 +36,16 @@ The following [impeccable](https://github.com/pbakaus/impeccable) slash-command 
 - `/onboard` — Design onboarding flows
 
 ## Agent build rules
-- Source of truth: AGENT_IMPLEMENTATION_PLAN.md. Current task: docs/agent/phase-N-*.md.
-- Definition of done for a phase: `npm run verify` is green AND acceptance criteria in the phase file pass.
+- Source of truth: docs/STATUS.md (current state, open items) + docs/ACCEPTANCE.md
+  (the human-runnable e2e checklist and the store/theme topology). Superseded
+  plans/phase docs live in docs/archive/ — context only, never instructions.
+- Definition of done for agent work: `npm run verify` green AND `npm run smoke` exit 0.
+  (`npm run smoke -- --url <product-url> [--dry-run]` runs ONE page through the real
+  pipeline against the dev store in ~40s with named per-step output.)
 - The LLM is never a quality gate. All schema judgment goes through lib/validation.
-- Never call the live Shopify API in unit tests. Mock the Asset API. The single
-  integration test is gated behind RUN_SHOPIFY_INTEGRATION=1 and skipped otherwise.
-- Work on branch feat/agent. Commit per phase. Do not edit a live/published theme — only SHOPIFY_TEST_THEME_ID or a duplicate.
+- Never call the live Shopify API in unit tests. Mock the Asset API. The integration
+  tests are gated behind RUN_SHOPIFY_INTEGRATION=1 and skipped otherwise.
+- Do not edit a live/published theme — only SHOPIFY_TEST_THEME_ID or a duplicate.
+  In env mode the published theme NEVER changes; results render only at
+  `?preview_theme_id=<SHOPIFY_TEST_THEME_ID>` (see the topology in docs/ACCEPTANCE.md).
 - After implementing, run `npm run verify` and fix until green before reporting done.
