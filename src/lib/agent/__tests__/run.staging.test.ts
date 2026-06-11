@@ -44,9 +44,6 @@ const h = vi.hoisted(() => {
 });
 vi.mock("@/lib/supabase", () => ({ createAdminClient: h.createAdminClient }));
 
-// The L6 judge never runs (judge:false default) but is mocked so no import can reach out.
-const judgeMock = vi.hoisted(() => ({ fn: vi.fn(async () => ({ passed: true, detail: "ok" })) }));
-vi.mock("../judge", () => ({ l6Judge: judgeMock.fn }));
 
 // Live apply mechanics live in apply.test.ts — here applyEntries is a mock whose
 // return value drives the publish/cleanup branches.

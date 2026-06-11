@@ -49,8 +49,6 @@ const h = vi.hoisted(() => {
 });
 vi.mock("@/lib/supabase", () => ({ createAdminClient: h.createAdminClient }));
 
-const judgeMock = vi.hoisted(() => ({ fn: vi.fn(async () => ({ passed: true, detail: "ok" })) }));
-vi.mock("../judge", () => ({ l6Judge: judgeMock.fn }));
 
 // applyEntries captures the suppression plan runGoal computed; the write/rollback
 // mechanics are apply.test.ts territory.

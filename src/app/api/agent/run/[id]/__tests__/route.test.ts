@@ -81,19 +81,12 @@ describe("POST /api/agent/run/[id] (control)", () => {
     expect(agentMock.setControl).toHaveBeenCalledWith("run-1", "kill");
   });
 
-  it("pause/resume return 501 (not implemented until Phase 5) and don't touch control", async () => {
+  it("400 on any non-kill control verb (pause/resume stubs were deleted)", async () => {
     mockAuthedClient.mockResolvedValue(mockAuthed({}) as never);
-    const resumeRes = await POST(ctrlReq({ control: "resume" }), params("run-1"));
-    expect(resumeRes.status).toBe(501);
-    const pauseRes = await POST(ctrlReq({ control: "pause" }), params("run-1"));
-    expect(pauseRes.status).toBe(501);
-    expect(agentMock.setControl).not.toHaveBeenCalled();
-  });
-
-  it("400 on an unknown control verb", async () => {
-    mockAuthedClient.mockResolvedValue(mockAuthed({}) as never);
-    const res = await POST(ctrlReq({ control: "frobnicate" }), params("run-1"));
-    expect(res.status).toBe(400);
+    for (const control of ["frobnicate", "pause", "resume"]) {
+      const res = await POST(ctrlReq({ control }), params("run-1"));
+      expect(res.status).toBe(400);
+    }
     expect(agentMock.setControl).not.toHaveBeenCalled();
   });
 });

@@ -101,20 +101,12 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const verb = body.control;
-  if (verb !== "kill" && verb !== "pause" && verb !== "resume") {
+  // "kill" is the only control verb. Pause/resume were reserved stubs that never
+  // shipped — deleted rather than left as a 501 trap.
+  if (body.control !== "kill") {
     return NextResponse.json(
-      { error: "control must be 'kill', 'pause', or 'resume'" },
+      { error: "control must be 'kill'" },
       { status: 400 }
-    );
-  }
-
-  // Only "kill" is wired in Phase 4. Don't pretend pause/resume succeeded — return 501
-  // so a future client integration can't mistake "kept running" for "paused" (Phase 5).
-  if (verb !== "kill") {
-    return NextResponse.json(
-      { error: `'${verb}' is not implemented until Phase 5` },
-      { status: 501 }
     );
   }
 

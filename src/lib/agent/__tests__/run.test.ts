@@ -40,12 +40,6 @@ const h = vi.hoisted(() => {
 });
 vi.mock("@/lib/supabase", () => ({ createAdminClient: h.createAdminClient }));
 
-// The L6 judge is mocked so no test makes a network call. Default: soft pass. Tests that
-// exercise judge:true override the return value. With judge:false (the default) it is
-// never invoked.
-const judgeMock = vi.hoisted(() => ({ fn: vi.fn(async () => ({ passed: true, detail: "ok" })) }));
-vi.mock("../judge", () => ({ l6Judge: judgeMock.fn }));
-
 // Live apply is exercised through a mocked applyEntries — run.test owns the run
 // ORCHESTRATION (breaker threading, status mapping, dry-run gating); apply.test owns
 // the write/rollback mechanics. makeShopifyOps is stubbed (no real Asset API).
@@ -139,8 +133,6 @@ beforeEach(() => {
   h.state.inserts = [];
   h.state.updates = [];
   h.state.committed = [];
-  judgeMock.fn.mockReset();
-  judgeMock.fn.mockResolvedValue({ passed: true, detail: "ok" });
   mockProcess.mockImplementation(async (url: string, mode: string) =>
     mode === "optimize" ? optimize(url) : scan(url)
   );
@@ -275,32 +267,6 @@ describe("runGoal Phase 5 hardening", () => {
     expect(maxActive).toBeLessThanOrEqual(2); // but never above the cap
   });
 
-  it("L6 judge logs but never gates: a FAILING judge still leaves pages staged", async () => {
-    judgeMock.fn.mockResolvedValue({ passed: false, detail: "judge: type mismatch" });
-
-    const result = await runGoal(goal, { persistAudit: false, judge: true });
-
-    // Run still completes; the failing soft judge did not block any commit.
-    expect(result.status).toBe("done");
-    expect(result.unsatisfied).toEqual([]);
-    expect(result.satisfied).toEqual(expect.arrayContaining([B, C, D, E]));
-    // Every executed action carries the L6 verdict (passed:false), recorded for audit.
-    const executed = result.actions.filter((a) => a.action !== "skip");
-    expect(executed).toHaveLength(4);
-    for (const a of executed) {
-      expect(a.gates?.L6).toEqual({ passed: false, detail: "judge: type mismatch" });
-    }
-    expect(judgeMock.fn).toHaveBeenCalledTimes(4);
-  });
-
-  it("judge is off by default: l6Judge is never invoked and no L6 is recorded", async () => {
-    const result = await runGoal(goal, { persistAudit: false });
-    expect(judgeMock.fn).not.toHaveBeenCalled();
-    const executed = result.actions.filter((a) => a.action !== "skip");
-    for (const a of executed) {
-      expect(a.gates?.L6).toBeUndefined();
-    }
-  });
 });
 
 // ---- Phase 3 live path ----

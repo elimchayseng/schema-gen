@@ -7,7 +7,6 @@
 import { processPage } from "@/lib/crawl/process-page";
 import { urlToTemplateTarget, type SnippetEntry } from "@/lib/shopify/snippet";
 import { gatesPassed } from "./types";
-import { l6Judge } from "./judge";
 import { repairToGoal, type RefineFn } from "./repair";
 import { runGates } from "./gates";
 import { applyOverrides, loadOverrides } from "./overrides";
@@ -23,10 +22,6 @@ export interface ExecutedTask {
 }
 
 export interface ExecuteOptions {
-  /** Run the SOFT L6 judge and attach its verdict as gates.L6 (never gates). Default off. */
-  judge?: boolean;
-  /** Injectable judge for tests; defaults to l6Judge. */
-  judgeFn?: typeof l6Judge;
   /** Max LLM repair rounds when the first pass fails the gates. Default 3; 0 disables. */
   maxRepairAttempts?: number;
   /** Injectable LLM refine fn for the repair loop (tests pass a deterministic stub). */
@@ -110,14 +105,8 @@ export async function executeTask(
     // best-effort by contract: identical to the no-overrides path
   }
 
-  // ok is the deterministic L0–L3 verdict. The L6 judge is computed AFTER this and never
-  // feeds into ok — gatesPassed ignores L6 by contract, so it is logged, never gating.
+  // ok is the deterministic L0–L3 verdict — lib/validation disposes, never an LLM.
   const ok = gatesPassed(gates);
-
-  if (opts.judge) {
-    const judgeFn = opts.judgeFn ?? l6Judge;
-    gates.L6 = await judgeFn({ url: task.url, candidates });
-  }
 
   const target = urlToTemplateTarget(task.url);
   const entry: SnippetEntry | null =
