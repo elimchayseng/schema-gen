@@ -49,3 +49,21 @@ The following [impeccable](https://github.com/pbakaus/impeccable) slash-command 
   In env mode the published theme NEVER changes; results render only at
   `?preview_theme_id=<SHOPIFY_TEST_THEME_ID>` (see the topology in docs/ACCEPTANCE.md).
 - After implementing, run `npm run verify` and fix until green before reporting done.
+
+## Skill routing
+
+When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+
+Key routing rules:
+- Product ideas/brainstorming → invoke /office-hours
+- Strategy/scope → invoke /plan-ceo-review
+- Architecture → invoke /plan-eng-review
+- Design system/plan review → invoke /design-consultation or /plan-design-review
+- Full review pipeline → invoke /autoplan
+- Bugs/errors → invoke /investigate
+- QA/testing site behavior → invoke /qa or /qa-only
+- Code review/diff check → invoke /review
+- Visual polish → invoke /design-review
+- Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Save progress → invoke /context-save
+- Resume context → invoke /context-restore
