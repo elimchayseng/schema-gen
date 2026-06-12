@@ -5,6 +5,12 @@
  * Sources:
  * - https://developers.google.com/search/docs/appearance/structured-data/search-gallery
  * - https://developers.google.com/search/docs/appearance/structured-data
+ *
+ * Audited against Google's docs on 2026-06-09 (issue #21). Deprecations since
+ * the map was first written: HowTo rich results (Sept 2023), sitelinks search
+ * box / WebSite (Nov 2024), FAQ rich results (restricted to gov/health sites
+ * in 2023, removed entirely May 2026). Full mapping, including intentional
+ * deviations, in docs/agent/rich-results-parity.md.
  */
 
 export interface RichResultInfo {
@@ -40,16 +46,16 @@ const richResults: Record<string, RichResultInfo> = {
       "Shows address, hours, and contact info in Maps and search results.",
   },
   WebSite: {
-    eligible: true,
-    feature: "Sitelinks search box",
+    eligible: false,
+    feature: "Deprecated (sitelinks search box)",
     description:
-      "Enables the search box within your site's search result listing.",
+      "Google retired the sitelinks search box in November 2024. WebSite markup still helps Google understand your site name but produces no rich result.",
   },
   FAQPage: {
-    eligible: true,
-    feature: "FAQ rich results",
+    eligible: false,
+    feature: "Deprecated (FAQ rich results)",
     description:
-      "Displays expandable Q&A directly in search results.",
+      "Google restricted FAQ rich results to authoritative government/health sites in 2023 and removed them entirely in May 2026.",
   },
   Article: {
     eligible: true,
@@ -80,10 +86,10 @@ const richResults: Record<string, RichResultInfo> = {
     description: "Shows star ratings and review information in search results.",
   },
   HowTo: {
-    eligible: true,
-    feature: "How-to rich results",
+    eligible: false,
+    feature: "Deprecated (how-to rich results)",
     description:
-      "Displays step-by-step instructions with images directly in search.",
+      "Google deprecated how-to rich results in September 2023. HowTo markup is still valid schema.org but produces no rich result.",
   },
   CollectionPage: {
     eligible: false,
@@ -96,6 +102,12 @@ const richResults: Record<string, RichResultInfo> = {
     feature: "Carousel",
     description:
       "Can trigger a carousel of items in search results.",
+  },
+  WebPage: {
+    eligible: false,
+    feature: "Supported type",
+    description:
+      "Recognized by Google but does not generate a specific rich result.",
   },
   AboutPage: {
     eligible: false,
@@ -173,6 +185,11 @@ export function getSeverityContext(
     case "MISSING_TYPE":
       return {
         label: "Google cannot identify this schema without @type",
+        impact: "critical",
+      };
+    case "RICH_RESULTS_REQUIREMENT":
+      return {
+        label: "Google requires this for rich results",
         impact: "critical",
       };
     default:

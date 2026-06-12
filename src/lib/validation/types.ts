@@ -70,9 +70,11 @@ export type ValidationErrorCode =
   | "INVALID_ENUM_VALUE"
   | "INVALID_URL_FORMAT"
   | "INVALID_DATE_FORMAT"
+  | "EXPIRED_PRICE_VALID_UNTIL"
   | "INVALID_PATTERN"
   | "ENUM_FORMAT"
-  | "SUBOPTIMAL_TYPE";
+  | "SUBOPTIMAL_TYPE"
+  | "RICH_RESULTS_REQUIREMENT";
 
 /** A single validation issue found in the schema */
 export interface ValidationIssue {

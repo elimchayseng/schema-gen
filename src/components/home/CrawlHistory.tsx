@@ -38,7 +38,7 @@ export default function CrawlHistory() {
   return (
     <div className="mb-8">
       <h2 className="font-serif text-xs uppercase tracking-wider text-text-muted mb-3">
-        Site Crawls
+        Previous Runs
       </h2>
       <div className="flex flex-col gap-2">
         {crawls.map((crawl) => (

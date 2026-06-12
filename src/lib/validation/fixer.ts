@@ -1,4 +1,4 @@
-import { validateSchema } from "./engine";
+import { validateSchema, isPastDateOnly } from "./engine";
 import { resolveProperties, resolveInvalidProperties } from "./engine";
 import { schemaDefinitions } from "./schema-definitions";
 import type { FixApplied, FixResult, PropertyDefinition, ValidationResult } from "./types";
@@ -22,9 +22,78 @@ export function fixSchema(schema: Record<string, unknown>): FixResult {
     fixObject(fixed, typeName, "$", fixes, null);
   }
 
+  // 5. Nested Organization without a url (publisher/seller/etc.): our quality bar
+  // requires Organization.url, but generators routinely emit a name-only publisher.
+  // The document itself knows the site — derive the url deterministically from the
+  // document's own absolute URL rather than asking the LLM to repair it.
+  fixNestedOrganizationUrl(fixed, fixes);
+
   const validationAfter = validateSchema(fixed);
 
   return { original, fixed, fixes, validationBefore, validationAfter };
+}
+
+/** First absolute http(s) URL that anchors this document (url / mainEntityOfPage / @id / offers.url). */
+function findDocumentUrl(obj: Record<string, unknown>): string | null {
+  const candidates: unknown[] = [
+    obj["url"],
+    obj["mainEntityOfPage"],
+    (obj["mainEntityOfPage"] as Record<string, unknown> | undefined)?.["@id"],
+    obj["@id"],
+    (obj["offers"] as Record<string, unknown> | undefined)?.["url"],
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && /^https?:\/\//.test(c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Add the site origin as `url` to NESTED Organization nodes that lack one.
+ * Root-level Organizations are left to the generator/repair loop — at the root the
+ * url is a content decision; nested (publisher, seller) it is mechanical.
+ */
+function fixNestedOrganizationUrl(
+  root: Record<string, unknown>,
+  fixes: FixApplied[]
+): void {
+  const docUrl = findDocumentUrl(root);
+  if (!docUrl) return;
+  let origin: string;
+  try {
+    origin = new URL(docUrl).origin;
+  } catch {
+    return;
+  }
+
+  const isOrganization = (v: Record<string, unknown>): boolean => {
+    const t = v["@type"];
+    return t === "Organization" || (Array.isArray(t) && t.includes("Organization"));
+  };
+  const hasUrl = (v: Record<string, unknown>): boolean =>
+    typeof v["url"] === "string" && v["url"].trim() !== "";
+
+  const visit = (value: unknown, path: string, isRoot: boolean): void => {
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => visit(v, `${path}[${i}]`, isRoot));
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    const obj = value as Record<string, unknown>;
+    if (!isRoot && isOrganization(obj) && !hasUrl(obj)) {
+      obj["url"] = origin;
+      fixes.push({
+        path: joinPath(path, "url"),
+        code: "MISSING_REQUIRED",
+        description: `Added url "${origin}" to nested Organization (derived from the document URL)`,
+      });
+    }
+    for (const key of Object.keys(obj)) {
+      if (key.startsWith("@")) continue;
+      visit(obj[key], joinPath(path, key), false);
+    }
+  };
+  visit(root, "$", true);
 }
 
 function fixContext(
@@ -100,7 +169,9 @@ function fixObject(
         const value = obj[key];
         const path = joinPath(basePath, key);
 
-        // Only move if parent doesn't already have this property
+        // Move it up if the parent doesn't have it yet; otherwise the misplaced copy
+        // is redundant (the parent already carries the right value) — drop it so it
+        // can't keep failing validation. Either way the property leaves the wrong type.
         if (!(key in parent.obj) || parent.obj[key] === undefined) {
           parent.obj[key] = value;
           delete obj[key];
@@ -108,6 +179,13 @@ function fixObject(
             path,
             code: "INVALID_PROPERTY_PLACEMENT",
             description: `Moved '${key}' from ${typeName} to ${parent.typeName}`,
+          });
+        } else {
+          delete obj[key];
+          fixes.push({
+            path,
+            code: "INVALID_PROPERTY_PLACEMENT",
+            description: `Removed redundant '${key}' from ${typeName} (already present on ${parent.typeName})`,
           });
         }
       }
@@ -126,6 +204,29 @@ function fixObject(
   }
 }
 
+/**
+ * Pull a URL string out of the many shapes a URL-valued property arrives in:
+ * a bare string, an `ImageObject`/object with `url`/`contentUrl`/`@id`/`src`, or an
+ * array of any of those (Shopify apps and LLMs both love to wrap image URLs in objects).
+ */
+function extractUrlLike(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() ? value : null;
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const u = extractUrlLike(v);
+      if (u) return u;
+    }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    for (const k of ["url", "contentUrl", "@id", "src"]) {
+      if (typeof o[k] === "string" && o[k]) return o[k] as string;
+    }
+  }
+  return null;
+}
+
 function fixValue(
   container: Record<string, unknown>,
   key: string,
@@ -136,6 +237,43 @@ function fixValue(
   current: { obj: Record<string, unknown>; typeName: string }
 ): void {
   if (value === undefined || value === null || value === "") return;
+
+  // Expired priceValidUntil: the LLM keeps emitting last year's date (seen live on
+  // every smoke run), which engine.ts rejects as EXPIRED_PRICE_VALID_UNTIL. Bump it
+  // one year past today — deterministic, so the repair loop heals it without a model.
+  if (
+    propDef.name === "priceValidUntil" &&
+    typeof value === "string" &&
+    !isNaN(Date.parse(value)) &&
+    isPastDateOnly(value)
+  ) {
+    const bumped = new Date();
+    bumped.setUTCFullYear(bumped.getUTCFullYear() + 1);
+    container[key] = bumped.toISOString().slice(0, 10);
+    fixes.push({
+      path,
+      code: "EXPIRED_PRICE_VALID_UNTIL",
+      description: `Bumped expired 'priceValidUntil' (${value}) one year forward`,
+    });
+    return;
+  }
+
+  // URL coercion: a URL-valued property (image, logo, url, …) given as an object
+  // ({"@type":"ImageObject","url":…}) or an array of strings/objects is reduced to a
+  // single URL string. Runs before the generic array handling so `image: [ImageObject]`
+  // and `image: {ImageObject}` are both handled, not just arrays of plain strings.
+  if (propDef.valueType === "URL" && typeof value !== "string") {
+    const url = extractUrlLike(value);
+    if (url) {
+      container[key] = url;
+      fixes.push({
+        path,
+        code: "INVALID_PROPERTY_TYPE",
+        description: `Reduced '${key}' to its URL string`,
+      });
+      return;
+    }
+  }
 
   // Array-to-scalar coercion: property expects URL/Text but LLM gave an array
   if (
@@ -320,6 +458,9 @@ export function fixSchemaWithContext(
 
   if (context?.pageUrl) {
     applyUrlAutoFill(fixed, context.pageUrl, "$", fixes);
+    // The root url may only exist NOW (auto-filled above), so the nested-Organization
+    // pass inside fixSchema found no document URL on generated schemas — run it again.
+    fixNestedOrganizationUrl(fixed, fixes);
   }
 
   // Re-validate after context fixes

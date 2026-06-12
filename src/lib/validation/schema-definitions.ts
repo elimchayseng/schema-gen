@@ -126,8 +126,13 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
         expectedTypes: ["Brand"],
       },
       {
+        // Google's product-snippet rule is ONE OF offers/review/aggregateRating
+        // (enforced as a conditional check in rich-results-requirements.ts), so
+        // `offers` alone is "recommended" here — flagging it "required" falsely
+        // failed real Products that carry only review/aggregateRating data
+        // (seen live on garnerandtow.com's @graph Product).
         name: "offers",
-        requirement: "required",
+        requirement: "recommended",
         valueType: "Object",
         expectedTypes: ["Offer", "AggregateOffer"],
       },
@@ -1037,7 +1042,7 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
   // ------------------------------------------------------------------
   CollectionPage: {
     type: "CollectionPage",
-    extends: "Thing",
+    extends: "WebPage",
     description: "A page that groups related items (e.g. a product collection).",
     properties: [
       {
@@ -1097,9 +1102,32 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
     ],
   },
 
+  WebPage: {
+    type: "WebPage",
+    extends: "Thing",
+    description: "A generic web page (e.g. a Shopify /pages/ content page).",
+    properties: [
+      {
+        name: "name",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "description",
+        requirement: "recommended",
+        valueType: "Text",
+      },
+      {
+        name: "url",
+        requirement: "recommended",
+        valueType: "URL",
+      },
+    ],
+  },
+
   AboutPage: {
     type: "AboutPage",
-    extends: "Thing",
+    extends: "WebPage",
     description: "A web page that provides information about the site or organization.",
     properties: [
       {
@@ -1122,7 +1150,7 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
 
   ContactPage: {
     type: "ContactPage",
-    extends: "Thing",
+    extends: "WebPage",
     description: "A web page with contact information.",
     properties: [
       {
@@ -1143,3 +1171,22 @@ export const schemaDefinitions: Record<string, SchemaTypeDefinition> = {
     ],
   },
 };
+
+/**
+ * Does a concrete schema type satisfy a required type? True for an exact match
+ * or when the actual type's `extends` chain reaches the required type — e.g. an
+ * AboutPage IS-A WebPage, a BlogPosting IS-A Article. Used by the agent's gates
+ * so a page that emits the more specific (better) type isn't failed for not
+ * carrying the generic one.
+ */
+export function typeSatisfies(actual: string, required: string): boolean {
+  if (actual === required) return true;
+  const seen = new Set<string>([actual]);
+  let cur = schemaDefinitions[actual];
+  while (cur?.extends && !seen.has(cur.extends)) {
+    if (cur.extends === required) return true;
+    seen.add(cur.extends);
+    cur = schemaDefinitions[cur.extends];
+  }
+  return false;
+}

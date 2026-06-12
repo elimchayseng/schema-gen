@@ -214,3 +214,52 @@ describe("generateSchemas caching", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("generateSchemas quote-repair (garnerandtow about page)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("HEROKU_INFERENCE_URL", "https://inference.test");
+    vi.stubEnv("HEROKU_INFERENCE_KEY", "test-key");
+    vi.stubEnv("HEROKU_INFERENCE_MODEL", "test-model");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("recovers when the model echoes unescaped quotes into a string value", async () => {
+    // The model wrote page copy verbatim: `The word "garner" means to gather` —
+    // invalid JSON. The structural repair must escape the inner quotes and the
+    // zod gate must still accept the recovered result.
+    const broken = JSON.stringify(VALID_RESULT).replace(
+      '"name":"Tee"',
+      '"name":"Tee","description":"The word "garner" means to gather"'
+    );
+    const response = makeSSEResponse([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: broken } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+
+    const { generateSchemas } = await import("../client");
+    const result = await generateSchemas(
+      "<html><body>About</body></html>",
+      "https://shop.test/pages/about"
+    );
+    const jsonld = result.recommendations[0].jsonld as { description?: string };
+    expect(jsonld.description).toBe('The word "garner" means to gather');
+  });
+
+  it("still throws when the response is irreparable", async () => {
+    const response = makeSSEResponse([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "{ totally broken" } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+
+    const { generateSchemas } = await import("../client");
+    await expect(
+      generateSchemas("<html><body>x</body></html>", "https://shop.test/x")
+    ).rejects.toThrow(/not valid JSON/);
+  });
+});

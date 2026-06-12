@@ -3,7 +3,12 @@
  * agent_runs row per execution. Server-only via the service-role client.
  */
 import { createAdminClient } from "@/lib/supabase";
-import type { ActionRecord, Goal, HaltSignal } from "./types";
+import type {
+  ActionRecord,
+  AgentProgressEvent,
+  Goal,
+  HaltSignal,
+} from "./types";
 
 export async function createRun(goal: Goal): Promise<string> {
   const supabase = createAdminClient();
@@ -21,6 +26,26 @@ export async function createRun(goal: Goal): Promise<string> {
     throw new Error(`Failed to create agent_run: ${error.message}`);
   }
   return (data as { id: string }).id;
+}
+
+/**
+ * Persist the run's resolved target URL list (issue #27, migration 010). Written once,
+ * right after resolveTargetUrls, so the merchant report can compute notReached exactly
+ * for ANY scope — not just url_list goals. Callers treat this like the other audit
+ * writes: best-effort (warn + continue on failure).
+ */
+export async function saveResolvedUrls(
+  runId: string,
+  urls: string[]
+): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("agent_runs")
+    .update({ resolved_urls: urls })
+    .eq("id", runId);
+  if (error) {
+    throw new Error(`Failed to save resolved_urls: ${error.message}`);
+  }
 }
 
 export async function recordAction(
@@ -70,6 +95,45 @@ export async function loadCommittedUrls(runId: string): Promise<Set<string>> {
   }
 }
 
+/**
+ * Persist the latest step event to agent_runs.last_step (migration 013) so a
+ * reconnecting client — or anyone reading GET /api/agent/run/[id] — can see exactly
+ * where the run is (or where it was when it stalled) without the SSE stream.
+ * Unlike the other audit writes this one swallows its own failures: it is called
+ * from the hot emit path on every checkpoint, and a missing column (migration not
+ * applied) must never break a run or even reach the caller.
+ */
+export async function recordStep(
+  runId: string,
+  ev: AgentProgressEvent
+): Promise<void> {
+  try {
+    const supabase = createAdminClient();
+    const { error } = await supabase
+      .from("agent_runs")
+      .update({
+        last_step: {
+          phase: ev.phase,
+          step: ev.step ?? null,
+          status: ev.status ?? null,
+          url: ev.url ?? null,
+          detail: ev.detail ?? null,
+          durationMs: ev.durationMs ?? null,
+          at: new Date().toISOString(),
+        },
+      })
+      .eq("id", runId);
+    // supabase-js reports failures in the result, not by throwing. Stay quiet for
+    // the expected pre-migration-013 missing column (PGRST204); surface anything else
+    // so a broken last_step persist is visible instead of silently stale.
+    if (error && error.code !== "PGRST204") {
+      console.warn(`[agent/audit] last_step persist failed: ${error.message}`);
+    }
+  } catch {
+    /* best-effort by design */
+  }
+}
+
 export interface FinishRunFields {
   status: "done" | "failed";
   iterations: number;
@@ -82,7 +146,7 @@ export interface FinishRunFields {
  * Read the cross-request control signal (agent_runs.control) the run loop polls at each
  * checkpoint. Best-effort: any read failure degrades to "run" so a transient Supabase
  * hiccup can never accidentally halt an otherwise-healthy run. Only "kill" maps to a
- * halt; "pause" (Phase 5, not yet wired) and anything else are treated as "run".
+ * halt; anything else is treated as "run".
  */
 export async function readControl(runId: string): Promise<HaltSignal> {
   try {
@@ -99,10 +163,10 @@ export async function readControl(runId: string): Promise<HaltSignal> {
   }
 }
 
-/** Write the control signal. The control route uses this; resume/pause map to "run". */
+/** Write the control signal. "kill" halts at the next checkpoint; "run" clears it. */
 export async function setControl(
   runId: string,
-  control: "run" | "pause" | "kill"
+  control: "run" | "kill"
 ): Promise<void> {
   const supabase = createAdminClient();
   const { error } = await supabase

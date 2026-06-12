@@ -9,9 +9,8 @@ import { setControl } from "@/lib/agent";
  * DB (agent_runs.control), which the run loop polls.
  *
  *   GET  → the run row + its recent actions (reconnect / repaint gate results / diff fallback)
- *   POST → { control: "kill" | "pause" | "resume" } sets agent_runs.control. Only "kill" is
- *          wired in Phase 4; "pause"/"resume" are accepted but map to "run" (Phase 5 owns
- *          durable pause/resume — the dashboard keeps those buttons disabled).
+ *   POST → { control: "kill" } sets agent_runs.control. "kill" is the only control verb;
+ *          anything else is rejected with 400 (pause/resume were removed).
  *
  * agent_runs has RLS enabled with no policies (server-only), so reads use the service-role
  * client AFTER verifying the run's site belongs to the authenticated user.
@@ -101,20 +100,12 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const verb = body.control;
-  if (verb !== "kill" && verb !== "pause" && verb !== "resume") {
+  // "kill" is the only control verb. Pause/resume were reserved stubs that never
+  // shipped — deleted rather than left as a 501 trap.
+  if (body.control !== "kill") {
     return NextResponse.json(
-      { error: "control must be 'kill', 'pause', or 'resume'" },
+      { error: "control must be 'kill'" },
       { status: 400 }
-    );
-  }
-
-  // Only "kill" is wired in Phase 4. Don't pretend pause/resume succeeded — return 501
-  // so a future client integration can't mistake "kept running" for "paused" (Phase 5).
-  if (verb !== "kill") {
-    return NextResponse.json(
-      { error: `'${verb}' is not implemented until Phase 5` },
-      { status: 501 }
     );
   }
 

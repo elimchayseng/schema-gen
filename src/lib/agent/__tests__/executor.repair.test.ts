@@ -128,4 +128,39 @@ describe("executeTask self-correction (the 'no longer crashes on first invalid p
     expect(result.action.outcome).toBe("gate_failed");
     expect(result.entry).toBeNull();
   });
+
+  it("forwards fetchHeaders to processPage so a gated store can be read in optimize mode", async () => {
+    mockProcess.mockResolvedValue({
+      url: task.url,
+      status: "valid",
+      originalSchemas: null,
+      fixedSchemas: [
+        {
+          "@context": "https://schema.org",
+          "@type": "Product",
+          name: "Molecule Cardholder",
+          description: "A minimal leather cardholder.",
+          image: "https://pioneercarry.com/img/molecule.jpg",
+          offers: {
+            "@type": "Offer",
+            price: 49,
+            priceCurrency: "USD",
+            availability: "https://schema.org/InStock",
+          },
+        },
+      ],
+      validationResults: null,
+    } as unknown as Awaited<ReturnType<typeof processPage>>);
+
+    await executeTask(goal, task, {
+      fetchHeaders: { Cookie: "storefront_digest=xyz" },
+    });
+
+    // requiredTypes rides along since issue #28: generation is told which types
+    // this page must produce.
+    expect(mockProcess).toHaveBeenCalledWith(task.url, "optimize", undefined, {
+      fetchHeaders: { Cookie: "storefront_digest=xyz" },
+      requiredTypes: ["Product"],
+    });
+  });
 });

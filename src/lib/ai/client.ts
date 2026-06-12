@@ -5,6 +5,7 @@ import type { GeneratorResult, LLMMessage } from "./types";
 import type { ValidationIssue } from "@/lib/validation/types";
 import { schemaDefinitions } from "@/lib/validation/schema-definitions";
 import { generationCache, hashContent } from "./cache";
+import { repairUnescapedStringQuotes } from "@/lib/url-validator/extractor";
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -310,7 +311,8 @@ export async function readSSEStream(
 
 export async function generateSchemas(
   html: string,
-  url: string
+  url: string,
+  requiredTypes?: string[]
 ): Promise<GeneratorResult> {
   if (!INFERENCE_URL || !INFERENCE_KEY || !INFERENCE_MODEL) {
     throw new Error(
@@ -331,11 +333,21 @@ export async function generateSchemas(
     model: INFERENCE_MODEL,
   });
 
+  // Issue #28: the agent knows which schema types this page type requires (the
+  // page-type matrix), so the prompt names them explicitly instead of leaving
+  // type selection to the model. Deterministic input → also part of the cache key.
+  const requiredBlock =
+    requiredTypes && requiredTypes.length > 0
+      ? `\n\nREQUIRED SCHEMA TYPES: ${requiredTypes.join(", ")}\n` +
+        "You MUST return one complete recommendation for EACH of these types " +
+        "(in addition to any other types genuinely appropriate for the page)."
+      : "";
+
   const messages: LLMMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     {
       role: "user",
-      content: `URL: ${url}\n\nHTML CONTENT:\n${cleanedHtml}`,
+      content: `URL: ${url}${requiredBlock}\n\nHTML CONTENT:\n${cleanedHtml}`,
     },
   ];
 
@@ -444,14 +456,32 @@ export async function generateSchemas(
     try {
       parsed = JSON.parse(jsonContent);
     } catch (parseErr) {
-      log("error", "LLM response is not valid JSON", {
-        requestId,
-        parseError: parseErr instanceof Error ? parseErr.message : String(parseErr),
-        contentPreview: jsonContent.slice(0, 500),
-        contentTail: jsonContent.slice(-200),
-        contentLength: jsonContent.length,
-      });
-      throw new Error("LLM response is not valid JSON");
+      // The model sometimes echoes page copy containing double quotes straight
+      // into a JSON string value (the garnerandtow about page: `The word "garner"
+      // means…`) — the same defect class as broken theme JSON-LD. Reuse the
+      // extractor's conservative structural repair; the zod schema below still
+      // gates the shape, so an accepted repair can't smuggle in a bad result.
+      const repaired = repairUnescapedStringQuotes(jsonContent);
+      let recovered: unknown = null;
+      if (repaired !== null) {
+        try {
+          recovered = JSON.parse(repaired);
+          log("warn", "Repaired unescaped quotes in LLM response", { requestId });
+        } catch {
+          recovered = null;
+        }
+      }
+      if (recovered === null) {
+        log("error", "LLM response is not valid JSON", {
+          requestId,
+          parseError: parseErr instanceof Error ? parseErr.message : String(parseErr),
+          contentPreview: jsonContent.slice(0, 500),
+          contentTail: jsonContent.slice(-200),
+          contentLength: jsonContent.length,
+        });
+        throw new Error("LLM response is not valid JSON");
+      }
+      parsed = recovered;
     }
 
     const validated = generatorResultSchema.safeParse(parsed);

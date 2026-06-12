@@ -104,6 +104,72 @@ describe("runGates", () => {
 
 });
 
+// Issue #28: per-type bars. A page can require one type at the rich bar and
+// another that only ever has to validate (rich-ineligible types like WebSite).
+describe("runGates with per-type requirements", () => {
+  const validWebSite = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "Acme",
+    url: "https://example.com",
+  };
+  const validOrg = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "Acme",
+    url: "https://example.com",
+  };
+
+  it("a rich-ineligible type at the 'valid' bar passes alongside a rich-bar type", () => {
+    // The homepage row of the matrix: Organization@rich + WebSite@valid. A global
+    // rich bar would be unsatisfiable (WebSite is permanently ineligible).
+    const g = runGates({
+      ...base,
+      requirements: [
+        { type: "Organization", outcome: "rich_results_eligible" },
+        { type: "WebSite", outcome: "valid" },
+      ],
+      candidates: [validOrg, validWebSite],
+    });
+    expect(gatesPassed(g)).toBe(true);
+    expect(g.L2?.passed).toBe(true); // evaluated — for Organization only
+  });
+
+  it("L2 is null when no requirement carries the rich bar", () => {
+    const g = runGates({
+      ...base,
+      requirements: [{ type: "WebSite", outcome: "valid" }],
+      candidates: [validWebSite],
+    });
+    expect(g.L2).toBeNull();
+    expect(gatesPassed(g)).toBe(true);
+  });
+
+  it("requirements REPLACE requireTypes/minOutcome when present", () => {
+    // base says Product@valid; requirements demand WebSite — and win.
+    const g = runGates({
+      ...base,
+      requirements: [{ type: "WebSite", outcome: "valid" }],
+      candidates: [validProduct],
+    });
+    expect(g.L1.passed).toBe(false);
+    expect(g.L1.detail).toMatch(/WebSite/);
+  });
+
+  it("a missing rich-bar type still fails L1 (per-type sets are complete sets)", () => {
+    const g = runGates({
+      ...base,
+      requirements: [
+        { type: "Product", outcome: "rich_results_eligible" },
+        { type: "BreadcrumbList", outcome: "rich_results_eligible" },
+      ],
+      candidates: [validProduct],
+    });
+    expect(g.L1.passed).toBe(false);
+    expect(g.L1.detail).toMatch(/BreadcrumbList/);
+  });
+});
+
 describe("schemaTypesOf", () => {
   it("normalizes string, array, and missing @type", () => {
     expect(schemaTypesOf({ "@type": "Product" })).toEqual(["Product"]);
@@ -131,5 +197,55 @@ describe("hasCriticalIssue", () => {
 
   it("is false when only recommended/best-practice issues exist", () => {
     expect(hasCriticalIssue(vr([], [{ code: "MISSING_RECOMMENDED" }]))).toBe(false);
+  });
+});
+
+describe("subtype-aware requirement matching (garnerandtow run-3 failures)", () => {
+  it("a valid AboutPage satisfies a WebPage requirement at L1", () => {
+    const aboutPage = {
+      "@context": "https://schema.org",
+      "@type": "AboutPage",
+      name: "About Garner and Tow",
+      url: "https://garnerandtow.com/pages/about",
+      description: "Our story",
+    };
+    const result = runGates({
+      candidates: [aboutPage],
+      requireTypes: ["WebPage"],
+      minOutcome: "valid",
+      beforeErrorCount: 0,
+      beforeHadSchema: false,
+    });
+    expect(result.L1.passed).toBe(true);
+  });
+
+  it("a BlogPosting satisfies an Article requirement, but not vice versa", () => {
+    const blogPosting = {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: "t",
+      author: { "@type": "Person", name: "a" },
+      datePublished: "2026-01-01",
+    };
+    const ok = runGates({
+      candidates: [blogPosting],
+      requireTypes: ["Article"],
+      minOutcome: "valid",
+      beforeErrorCount: 0,
+      beforeHadSchema: false,
+    });
+    expect(ok.L1.passed).toBe(true);
+
+    // The PARENT type never satisfies a more specific requirement.
+    const article = { ...blogPosting, "@type": "Article" };
+    const notOk = runGates({
+      candidates: [article],
+      requireTypes: ["BlogPosting"],
+      minOutcome: "valid",
+      beforeErrorCount: 0,
+      beforeHadSchema: false,
+    });
+    expect(notOk.L1.passed).toBe(false);
+    expect(notOk.L1.detail).toContain("BlogPosting");
   });
 });

@@ -11,6 +11,8 @@ export { schemaDefinitions } from "./schema-definitions";
 
 export { fixSchema } from "./fixer";
 
+export { checkRichResultsRequirements } from "./rich-results-requirements";
+
 export {
   canDeploy,
   validateAIOutput,

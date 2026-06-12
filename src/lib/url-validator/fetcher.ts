@@ -43,7 +43,15 @@ export function isPrivateHostname(hostname: string): boolean {
   return false;
 }
 
-export async function fetchPage(url: string): Promise<FetchResult> {
+export interface FetchPageOptions {
+  /** Extra request headers (e.g. a `Cookie` for a password-protected storefront). */
+  headers?: Record<string, string>;
+}
+
+export async function fetchPage(
+  url: string,
+  opts: FetchPageOptions = {}
+): Promise<FetchResult> {
   // Validate URL and check for SSRF
   let parsedUrl: URL;
   try {
@@ -75,6 +83,7 @@ export async function fetchPage(url: string): Promise<FetchResult> {
         "User-Agent": USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
+        ...opts.headers,
       },
       redirect: "follow",
     });

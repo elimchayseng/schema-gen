@@ -7,9 +7,11 @@
 import { processPage } from "@/lib/crawl/process-page";
 import { urlToTemplateTarget, type SnippetEntry } from "@/lib/shopify/snippet";
 import { gatesPassed } from "./types";
-import { l6Judge } from "./judge";
 import { repairToGoal, type RefineFn } from "./repair";
-import type { ActionRecord, Goal, PlannedTask } from "./types";
+import { runGates } from "./gates";
+import { applyOverrides, loadOverrides } from "./overrides";
+import { uniformRequirements } from "./page-type-matrix";
+import type { ActionRecord, Goal, PlannedTask, TypeRequirement } from "./types";
 
 export interface ExecutedTask {
   url: string;
@@ -20,16 +22,17 @@ export interface ExecutedTask {
 }
 
 export interface ExecuteOptions {
-  /** Run the SOFT L6 judge and attach its verdict as gates.L6 (never gates). Default off. */
-  judge?: boolean;
-  /** Injectable judge for tests; defaults to l6Judge. */
-  judgeFn?: typeof l6Judge;
   /** Max LLM repair rounds when the first pass fails the gates. Default 3; 0 disables. */
   maxRepairAttempts?: number;
   /** Injectable LLM refine fn for the repair loop (tests pass a deterministic stub). */
   refineFn?: RefineFn;
   /** Progress sink: fired while the agent self-corrects a page. */
   onRepairAttempt?: (url: string, attempt: number, detail: string) => void;
+  /**
+   * Extra fetch headers (e.g. a storefront-password `Cookie`) forwarded to the page
+   * fetch inside processPage, so the executor can read a password-gated dev store.
+   */
+  fetchHeaders?: Record<string, string>;
 }
 
 export async function executeTask(
@@ -37,8 +40,20 @@ export async function executeTask(
   task: PlannedTask,
   opts: ExecuteOptions = {}
 ): Promise<ExecutedTask> {
-  // optimize = extract -> validate -> fix -> AI generate -> refine.
-  const result = await processPage(task.url, "optimize");
+  // This page's required types with their per-type bars (issue #28): the planner
+  // threads them from perceive; absent (pre-matrix callers, url_list fixtures)
+  // they fall back to the goal's uniform requireTypes @ minOutcome.
+  const requirements: TypeRequirement[] =
+    task.requirements ??
+    uniformRequirements(goal.target.requireTypes, goal.target.minOutcome);
+
+  // optimize = extract -> validate -> fix -> AI generate -> refine. The required
+  // type names ride along so generation produces the page type's required SET
+  // (e.g. Product + BreadcrumbList), not whatever the model guesses.
+  const result = await processPage(task.url, "optimize", undefined, {
+    fetchHeaders: opts.fetchHeaders,
+    requiredTypes: requirements.map((r) => r.type),
+  });
   const initialCandidates = (result.fixedSchemas ?? []) as Record<string, unknown>[];
 
   // Self-repair loop: sanitize junk types, deterministically auto-fix, then ask the LLM
@@ -49,6 +64,7 @@ export async function executeTask(
     candidates: initialCandidates,
     requireTypes: goal.target.requireTypes,
     minOutcome: goal.target.minOutcome,
+    requirements,
     beforeErrorCount: task.beforeErrorCount,
     beforeHadSchema: task.beforeHadSchema,
     maxAttempts: opts.maxRepairAttempts,
@@ -57,16 +73,40 @@ export async function executeTask(
       ? (n, d) => opts.onRepairAttempt!(task.url, n, d)
       : undefined,
   });
-  const candidates = repair.candidates;
-  const gates = repair.gates;
-  // ok is the deterministic L0–L3 verdict. The L6 judge is computed AFTER this and never
-  // feeds into ok — gatesPassed ignores L6 by contract, so it is logged, never gating.
-  const ok = gatesPassed(gates);
+  let candidates = repair.candidates;
+  let gates = repair.gates;
 
-  if (opts.judge) {
-    const judgeFn = opts.judgeFn ?? l6Judge;
-    gates.L6 = await judgeFn({ url: task.url, candidates });
+  // Sticky merchant overrides (issue #29): a merchant correction always wins over a
+  // regenerate. Applied AFTER the repair loop produced its candidate and BEFORE the
+  // verdict, so the gates evaluate the document that would actually ship. Strictly
+  // best-effort: a load failure (no DB in tests, network blip) must behave exactly
+  // like "no overrides" — it can never fail the task.
+  let overridesApplied = 0;
+  try {
+    const overrides = await loadOverrides(goal.siteId, task.url);
+    if (overrides.length > 0) {
+      const merged = applyOverrides(candidates, overrides);
+      if (merged.applied.length > 0) {
+        candidates = merged.result as Record<string, unknown>[];
+        overridesApplied = merged.applied.length;
+        // Re-gate the overridden document — overrides are merchant data, not a
+        // quality gate; lib/validation still disposes.
+        gates = runGates({
+          candidates,
+          requireTypes: goal.target.requireTypes,
+          minOutcome: goal.target.minOutcome,
+          requirements,
+          beforeErrorCount: task.beforeErrorCount,
+          beforeHadSchema: task.beforeHadSchema,
+        });
+      }
+    }
+  } catch {
+    // best-effort by contract: identical to the no-overrides path
   }
+
+  // ok is the deterministic L0–L3 verdict — lib/validation disposes, never an LLM.
+  const ok = gatesPassed(gates);
 
   const target = urlToTemplateTarget(task.url);
   const entry: SnippetEntry | null =
@@ -83,13 +123,16 @@ export async function executeTask(
   // so the audit row records *why* a page didn't stage. A success that needed the
   // LLM repair loop records how many rounds it took, so the audit shows the agent
   // self-corrected rather than passing on the first try.
-  const outcome = ok
+  const baseOutcome = ok
     ? repair.attempts > 0
       ? `staged (self-corrected in ${repair.attempts} ${repair.attempts === 1 ? "pass" : "passes"})`
       : "staged"
     : result.errorReason
       ? `processing_failed: ${result.errorReason}`
       : "gate_failed";
+  // Surface applied merchant overrides in the audit row (issue #29).
+  const outcome =
+    overridesApplied > 0 ? `${baseOutcome}, overrides:${overridesApplied}` : baseOutcome;
 
   const action: ActionRecord = {
     url: task.url,

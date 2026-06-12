@@ -83,6 +83,65 @@ describe("fixSchema", () => {
     expect(offers.availability).toBe("https://schema.org/InStock");
   });
 
+  it("removes a redundant misplaced property when the parent already has it", () => {
+    // sku on BOTH Product and Offer — can't move (Product has one), so drop the Offer copy.
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Test Product",
+      sku: "PROD-1",
+      image: "https://x.com/i.jpg",
+      offers: {
+        "@type": "Offer",
+        price: 49,
+        priceCurrency: "USD",
+        sku: "OFFER-1",
+        availability: "https://schema.org/InStock",
+      },
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    const offers = result.fixed.offers as Record<string, unknown>;
+    expect(offers.sku).toBeUndefined();
+    expect(result.fixed.sku).toBe("PROD-1"); // the Product's own sku is untouched
+    expect(result.validationAfter.valid).toBe(true);
+  });
+
+  it("reduces an image given as an ImageObject to its URL string", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Test Product",
+      image: { "@type": "ImageObject", url: "https://x.com/i.jpg" },
+      offers: {
+        "@type": "Offer",
+        price: 49,
+        priceCurrency: "USD",
+        availability: "https://schema.org/InStock",
+      },
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    expect(result.fixed.image).toBe("https://x.com/i.jpg");
+    expect(result.validationAfter.valid).toBe(true);
+  });
+
+  it("reduces an image given as an array of ImageObjects to a single URL string", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Test Product",
+      image: [{ "@type": "ImageObject", url: "https://x.com/a.jpg" }],
+      offers: {
+        "@type": "Offer",
+        price: 49,
+        priceCurrency: "USD",
+        availability: "https://schema.org/InStock",
+      },
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    expect(result.fixed.image).toBe("https://x.com/a.jpg");
+    expect(result.validationAfter.valid).toBe(true);
+  });
+
   it("expands enum shorthand to full URL", () => {
     const schema = {
       "@context": "https://schema.org",
@@ -237,7 +296,7 @@ describe("fixSchema", () => {
     expect(result.fixes.length).toBeGreaterThanOrEqual(4);
   });
 
-  it("does not move property if parent already has it", () => {
+  it("drops a misplaced property (without overwriting) when the parent already has it", () => {
     const schema = {
       "@context": "https://schema.org",
       "@type": "Product",
@@ -247,17 +306,17 @@ describe("fixSchema", () => {
         "@type": "Offer",
         price: 29.99,
         priceCurrency: "USD",
-        color: "Red", // would conflict with existing Product.color
+        color: "Red", // conflicts with the Product's own color
       },
     };
 
     const result = fixSchema(schema as Record<string, unknown>);
     const offers = result.fixed.offers as Record<string, unknown>;
 
-    // Parent already has color, so don't overwrite
+    // The Product's own color is authoritative and is never overwritten…
     expect(result.fixed.color).toBe("Blue");
-    // color stays on Offer since we can't safely move it
-    expect(offers.color).toBe("Red");
+    // …and the redundant copy is removed from Offer (leaving it there is invalid).
+    expect(offers.color).toBeUndefined();
   });
 
   it("handles itemCondition enum shorthand", () => {
@@ -300,5 +359,156 @@ describe("fixSchema", () => {
     expect(
       result.validationAfter.errors.length
     ).toBeLessThan(result.validationBefore.errors.length);
+  });
+
+  it("adds url to a nested publisher Organization from the document URL", () => {
+    // The garnerandtow dry-run case: generated BlogPosting carries a name-only
+    // publisher; our Organization quality bar wants url, and the document knows it.
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: "Urban cycling in fall",
+      author: { "@type": "Person", name: "G&T" },
+      datePublished: "2026-01-01",
+      url: "https://garnerandtow.com/blogs/press/urban-cycling",
+      publisher: { "@type": "Organization", name: "Garner and Tow" },
+    };
+
+    const result = fixSchema(schema as Record<string, unknown>);
+
+    const publisher = (result.fixed as { publisher: { url?: string } }).publisher;
+    expect(publisher.url).toBe("https://garnerandtow.com");
+    expect(
+      result.fixes.some(
+        (f) => f.path === "publisher.url" && f.code === "MISSING_REQUIRED"
+      )
+    ).toBe(true);
+    expect(
+      result.validationAfter.errors.filter((e) =>
+        e.message.includes("'url' is missing from Organization")
+      )
+    ).toHaveLength(0);
+  });
+
+  it("leaves a root Organization and url-carrying nested Organizations alone", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "Garner and Tow",
+      // No url on the ROOT org: that's a content decision, not mechanical — no fix.
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    expect((result.fixed as { url?: string }).url).toBeUndefined();
+
+    const withUrl = {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: "t",
+      author: { "@type": "Person", name: "a" },
+      datePublished: "2026-01-01",
+      url: "https://garnerandtow.com/x",
+      publisher: {
+        "@type": "Organization",
+        name: "G&T",
+        url: "https://example.com/keep-me",
+      },
+    };
+    const r2 = fixSchema(withUrl as Record<string, unknown>);
+    expect(
+      (r2.fixed as { publisher: { url: string } }).publisher.url
+    ).toBe("https://example.com/keep-me");
+  });
+
+  it("does nothing when the document carries no absolute URL", () => {
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: "t",
+      author: { "@type": "Person", name: "a" },
+      datePublished: "2026-01-01",
+      publisher: { "@type": "Organization", name: "G&T" },
+    };
+    const result = fixSchema(schema as Record<string, unknown>);
+    expect(
+      (result.fixed as { publisher: { url?: string } }).publisher.url
+    ).toBeUndefined();
+  });
+});
+
+describe("fixSchemaWithContext ordering (garnerandtow run-3 articles)", () => {
+  it("fills publisher.url even when the document url itself is auto-filled", async () => {
+    const { fixSchemaWithContext } = await import("../fixer");
+    // Generated Article with NO url anywhere — exactly what generation produced.
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Article",
+      headline: "Urban cycling in fall",
+      author: { "@type": "Person", name: "G&T" },
+      datePublished: "2026-01-01",
+      publisher: { "@type": "Organization", name: "Garner and Tow" },
+    };
+    const result = fixSchemaWithContext(schema as Record<string, unknown>, {
+      pageUrl: "https://garnerandtow.com/blogs/press/urban-cycling",
+    });
+    const fixed = result.fixed as {
+      url?: string;
+      publisher: { url?: string };
+    };
+    expect(fixed.url).toBe("https://garnerandtow.com/blogs/press/urban-cycling");
+    expect(fixed.publisher.url).toBe("https://garnerandtow.com");
+    expect(
+      result.validationAfter.errors.filter((e) =>
+        e.message.includes("'url' is missing from Organization")
+      )
+    ).toHaveLength(0);
+  });
+});
+
+describe("expired priceValidUntil bump", () => {
+  const daysFromNow = (d: number) =>
+    new Date(Date.now() + d * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+  it("bumps a past priceValidUntil one year forward (deterministic, no model)", () => {
+    const result = fixSchema({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Wax",
+      offers: {
+        "@type": "Offer",
+        price: 9.99,
+        priceCurrency: "USD",
+        priceValidUntil: daysFromNow(-180),
+      },
+    });
+    const offers = (result.fixed as { offers: { priceValidUntil: string } }).offers;
+    expect(offers.priceValidUntil > daysFromNow(0)).toBe(true);
+    expect(
+      result.fixes.some((f) => f.code === "EXPIRED_PRICE_VALID_UNTIL")
+    ).toBe(true);
+    expect(
+      result.validationAfter.errors.some(
+        (e) => e.code === "EXPIRED_PRICE_VALID_UNTIL"
+      )
+    ).toBe(false);
+  });
+
+  it("leaves a future priceValidUntil untouched", () => {
+    const future = daysFromNow(30);
+    const result = fixSchema({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "Wax",
+      offers: {
+        "@type": "Offer",
+        price: 9.99,
+        priceCurrency: "USD",
+        priceValidUntil: future,
+      },
+    });
+    const offers = (result.fixed as { offers: { priceValidUntil: string } }).offers;
+    expect(offers.priceValidUntil).toBe(future);
+    expect(
+      result.fixes.some((f) => f.code === "EXPIRED_PRICE_VALID_UNTIL")
+    ).toBe(false);
   });
 });

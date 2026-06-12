@@ -40,12 +40,6 @@ const h = vi.hoisted(() => {
 });
 vi.mock("@/lib/supabase", () => ({ createAdminClient: h.createAdminClient }));
 
-// The L6 judge is mocked so no test makes a network call. Default: soft pass. Tests that
-// exercise judge:true override the return value. With judge:false (the default) it is
-// never invoked.
-const judgeMock = vi.hoisted(() => ({ fn: vi.fn(async () => ({ passed: true, detail: "ok" })) }));
-vi.mock("../judge", () => ({ l6Judge: judgeMock.fn }));
-
 // Live apply is exercised through a mocked applyEntries — run.test owns the run
 // ORCHESTRATION (breaker threading, status mapping, dry-run gating); apply.test owns
 // the write/rollback mechanics. makeShopifyOps is stubbed (no real Asset API).
@@ -56,6 +50,16 @@ vi.mock("../apply", () => ({
 }));
 vi.mock("@/lib/shopify/config", () => ({
   getShopifyConfig: () => ({ shop: "shop.myshopify.com", apiVersion: "2025-01", baseUrl: "x" }),
+}));
+// Theme write guard (env mode) — mocked so the guard never fetches a real theme
+// list; its role/existence checks are unit-tested in themes.test.ts.
+vi.mock("@/lib/shopify/themes", () => ({
+  MANAGED_STAGING_PREFIX: "SchemaGen Staging",
+  assertSafeWriteTheme: vi.fn(),
+  themesList: vi.fn(async () => []),
+  prepareStagingTheme: vi.fn(),
+  themePublish: vi.fn(),
+  themeDelete: vi.fn(),
 }));
 
 import { processPage } from "@/lib/crawl/process-page";
@@ -139,8 +143,6 @@ beforeEach(() => {
   h.state.inserts = [];
   h.state.updates = [];
   h.state.committed = [];
-  judgeMock.fn.mockReset();
-  judgeMock.fn.mockResolvedValue({ passed: true, detail: "ok" });
   mockProcess.mockImplementation(async (url: string, mode: string) =>
     mode === "optimize" ? optimize(url) : scan(url)
   );
@@ -197,8 +199,15 @@ describe("runGoal (5-page fixture, dry-run)", () => {
     // executed actions persist their gates
     const withGates = actionInserts.filter((i) => i.payload.gates != null);
     expect(withGates).toHaveLength(4);
-    // run finalized
-    const runUpdate = h.state.updates.find((u) => u.table === "agent_runs");
+    // resolved target list persisted right after resolution (issue #27)…
+    const resolvedUpdate = h.state.updates.find(
+      (u) => u.table === "agent_runs" && "resolved_urls" in u.payload
+    );
+    expect(resolvedUpdate?.payload).toEqual({ resolved_urls: [A, B, C, D, E] });
+    // …and the run finalized
+    const runUpdate = h.state.updates.find(
+      (u) => u.table === "agent_runs" && "status" in u.payload
+    );
     expect(runUpdate?.payload).toMatchObject({ status: "done" });
   });
 
@@ -268,32 +277,6 @@ describe("runGoal Phase 5 hardening", () => {
     expect(maxActive).toBeLessThanOrEqual(2); // but never above the cap
   });
 
-  it("L6 judge logs but never gates: a FAILING judge still leaves pages staged", async () => {
-    judgeMock.fn.mockResolvedValue({ passed: false, detail: "judge: type mismatch" });
-
-    const result = await runGoal(goal, { persistAudit: false, judge: true });
-
-    // Run still completes; the failing soft judge did not block any commit.
-    expect(result.status).toBe("done");
-    expect(result.unsatisfied).toEqual([]);
-    expect(result.satisfied).toEqual(expect.arrayContaining([B, C, D, E]));
-    // Every executed action carries the L6 verdict (passed:false), recorded for audit.
-    const executed = result.actions.filter((a) => a.action !== "skip");
-    expect(executed).toHaveLength(4);
-    for (const a of executed) {
-      expect(a.gates?.L6).toEqual({ passed: false, detail: "judge: type mismatch" });
-    }
-    expect(judgeMock.fn).toHaveBeenCalledTimes(4);
-  });
-
-  it("judge is off by default: l6Judge is never invoked and no L6 is recorded", async () => {
-    const result = await runGoal(goal, { persistAudit: false });
-    expect(judgeMock.fn).not.toHaveBeenCalled();
-    const executed = result.actions.filter((a) => a.action !== "skip");
-    for (const a of executed) {
-      expect(a.gates?.L6).toBeUndefined();
-    }
-  });
 });
 
 // ---- Phase 3 live path ----

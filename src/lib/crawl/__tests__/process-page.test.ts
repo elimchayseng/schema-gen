@@ -229,6 +229,87 @@ describe("processPage", () => {
     });
   });
 
+  // Issue #20e — pages with unparseable JSON-LD blocks are "invalid schema
+  // present" (an error state), NEVER "schema missing". Treating them as missing
+  // is what made the system generate a duplicate block on garnerandtow.com.
+  describe("unparseable JSON-LD blocks (issue #20e)", () => {
+    const unparseableBlock = {
+      raw: '{"@type":"Product","additionalProperty":[{"value":"["gid://x"]"}]}',
+      parsed: null,
+      parseError: "Unexpected token g in JSON at position 42",
+      position: 0,
+    };
+
+    beforeEach(() => {
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/products/duffel",
+        statusCode: 200,
+      });
+    });
+
+    it("scan mode: only-unparseable page is 'errors' with structured detail, not 'no_schema'", async () => {
+      mockExtractJsonLd.mockReturnValue([unparseableBlock]);
+
+      const result = await processPage("https://example.com/products/duffel", "scan");
+
+      expect(result.status).toBe("errors");
+      expect(result.validationResults?.errorCount).toBe(1);
+      const entry = result.validationResults!.schemas[0];
+      expect(entry.type).toBe("InvalidJSON");
+      expect(entry.validation.errors[0].code).toBe("INVALID_JSON");
+      expect(entry.validation.errors[0].message).toContain("could not be parsed");
+      // The broken raw block is surfaced so the user/agent can see what is live
+      expect(String(entry.validation.errors[0].actualValue)).toContain("gid://x");
+      expect(result.fixedSchemas).toBeNull();
+    });
+
+    it("optimize mode: only-unparseable page does NOT AI-generate a duplicate block", async () => {
+      mockExtractJsonLd.mockReturnValue([unparseableBlock]);
+
+      const result = await processPage(
+        "https://example.com/products/duffel",
+        "optimize"
+      );
+
+      expect(result.status).toBe("errors");
+      expect(mockGenerateSchemas).not.toHaveBeenCalled();
+    });
+
+    it("scan mode: valid block + unparseable block is 'errors', unparseable entries never enter fixedSchemas", async () => {
+      mockExtractJsonLd.mockReturnValue([
+        unparseableBlock,
+        {
+          raw: '{"@type":"Organization"}',
+          parsed: { "@type": "Organization", "@context": "https://schema.org", name: "B" },
+          parseError: undefined,
+          position: 1,
+        },
+      ]);
+
+      mockValidateSchema.mockReturnValue({
+        valid: true, errors: [], warnings: [],
+        summary: { errorCount: 0, warningCount: 0, schemaType: "Organization", validationTimeMs: 1 },
+      });
+      mockFixSchema.mockImplementation((schema) => ({
+        original: schema as Record<string, unknown>,
+        fixed: schema as Record<string, unknown>,
+        fixes: [],
+        validationBefore: { valid: true, errors: [], warnings: [], summary: { errorCount: 0, warningCount: 0, schemaType: "Organization", validationTimeMs: 1 } },
+        validationAfter: { valid: true, errors: [], warnings: [], summary: { errorCount: 0, warningCount: 0, schemaType: "Organization", validationTimeMs: 1 } },
+      }));
+
+      const result = await processPage("https://example.com/products/duffel", "scan");
+
+      expect(result.status).toBe("errors");
+      expect(result.validationResults?.errorCount).toBe(1);
+      expect(result.validationResults?.schemas).toHaveLength(2);
+      // Only the real Organization schema is stageable
+      expect(result.fixedSchemas).toHaveLength(1);
+      expect(result.fixedSchemas![0]["@type"]).toBe("Organization");
+    });
+  });
+
   describe("optimize mode", () => {
     it("generates schemas via AI for pages with no existing schema", async () => {
       mockFetchPage.mockResolvedValue({
@@ -343,6 +424,100 @@ describe("processPage", () => {
       expect(result.fixedSchemas?.[0]).toEqual(aiRefinedProduct);
     });
 
+    it("requiredTypes: generation runs on an error-free page when a required type is missing, and the new block is ADDED (issue #28)", async () => {
+      // A homepage carrying only a valid WebSite — Organization is required but absent.
+      const website = { "@type": "WebSite", "@context": "https://schema.org", name: "Acme", url: "https://example.com" };
+      const org = { "@type": "Organization", "@context": "https://schema.org", name: "Acme", url: "https://example.com" };
+      const cleanValidation = {
+        valid: true, errors: [], warnings: [],
+        summary: { errorCount: 0, warningCount: 0, schemaType: "WebSite", validationTimeMs: 1 },
+      };
+
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([
+        { raw: "{}", parsed: website, parseError: undefined, position: 0 },
+      ]);
+      mockValidateSchema.mockReturnValue(cleanValidation);
+      mockFixSchema.mockReturnValue({
+        original: website,
+        fixed: website,
+        fixes: [],
+        validationBefore: cleanValidation,
+        validationAfter: cleanValidation,
+      });
+      mockGenerateSchemas.mockResolvedValue({
+        pageType: "homepage",
+        recommendations: [
+          { type: "Organization", priority: 1 as const, rationale: "r", jsonld: org, shopifyInstructions: "s" },
+          // An unsolicited extra type must still be dropped (pre-#28 behavior kept).
+          { type: "Product", priority: 3 as const, rationale: "r", jsonld: { "@type": "Product" }, shopifyInstructions: "s" },
+        ],
+        mergedJsonld: [],
+        notes: [],
+      });
+      mockRefineAll.mockResolvedValue([
+        {
+          type: "Organization", priority: 1 as const, rationale: "r", jsonld: org, shopifyInstructions: "s",
+          validation: { ...cleanValidation, summary: { ...cleanValidation.summary, schemaType: "Organization" } },
+          fixes: [], enhancementNotes: [], refinementPasses: 1,
+        },
+        {
+          type: "Product", priority: 3 as const, rationale: "r", jsonld: { "@type": "Product" }, shopifyInstructions: "s",
+          validation: { ...cleanValidation, summary: { ...cleanValidation.summary, schemaType: "Product" } },
+          fixes: [], enhancementNotes: [], refinementPasses: 1,
+        },
+      ]);
+
+      const result = await processPage("https://example.com/", "optimize", undefined, {
+        requiredTypes: ["Organization", "WebSite"],
+      });
+
+      // The hint reached the generator…
+      expect(mockGenerateSchemas).toHaveBeenCalledWith(
+        expect.any(String),
+        "https://example.com/",
+        ["Organization", "WebSite"]
+      );
+      // …and the missing required type was added; the unsolicited Product was not.
+      const types = result.fixedSchemas?.map((s) => s["@type"]);
+      expect(types).toEqual(["WebSite", "Organization"]);
+    });
+
+    it("requiredTypes already satisfied: an error-free page never triggers generation", async () => {
+      const website = { "@type": "WebSite", "@context": "https://schema.org", name: "Acme", url: "https://example.com" };
+      const cleanValidation = {
+        valid: true, errors: [], warnings: [],
+        summary: { errorCount: 0, warningCount: 0, schemaType: "WebSite", validationTimeMs: 1 },
+      };
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([
+        { raw: "{}", parsed: website, parseError: undefined, position: 0 },
+      ]);
+      mockValidateSchema.mockReturnValue(cleanValidation);
+      mockFixSchema.mockReturnValue({
+        original: website,
+        fixed: website,
+        fixes: [],
+        validationBefore: cleanValidation,
+        validationAfter: cleanValidation,
+      });
+
+      const result = await processPage("https://example.com/", "optimize", undefined, {
+        requiredTypes: ["WebSite"],
+      });
+
+      expect(result.status).toBe("valid");
+      expect(mockGenerateSchemas).not.toHaveBeenCalled();
+    });
+
     it("handles AI generation failure gracefully", async () => {
       mockFetchPage.mockResolvedValue({
         html: "<html></html>",
@@ -357,6 +532,39 @@ describe("processPage", () => {
 
       expect(result.status).toBe("no_schema");
       expect(result.errorReason).toContain("AI generation failed");
+    });
+  });
+
+  describe("fetchHeaders (password-gated storefront)", () => {
+    it("forwards fetchHeaders to fetchPage so a gated dev store can be perceived", async () => {
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://shop.myshopify.com/products/x",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([]);
+
+      await processPage("https://shop.myshopify.com/products/x", "scan", undefined, {
+        fetchHeaders: { Cookie: "storefront_digest=abc123" },
+      });
+
+      expect(mockFetchPage).toHaveBeenCalledWith(
+        "https://shop.myshopify.com/products/x",
+        { headers: { Cookie: "storefront_digest=abc123" } }
+      );
+    });
+
+    it("fetches anonymously (empty opts) when no fetchHeaders are given", async () => {
+      mockFetchPage.mockResolvedValue({
+        html: "<html></html>",
+        finalUrl: "https://example.com/",
+        statusCode: 200,
+      });
+      mockExtractJsonLd.mockReturnValue([]);
+
+      await processPage("https://example.com/", "scan");
+
+      expect(mockFetchPage).toHaveBeenCalledWith("https://example.com/", {});
     });
   });
 });

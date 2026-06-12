@@ -165,14 +165,53 @@ describe("Missing required properties", () => {
     expect(err!.message).toContain("name");
   });
 
-  it("8. Product missing 'offers' — error MISSING_REQUIRED", () => {
+  // Issue #21: Google's product-snippet rule is ONE OF offers/review/aggregateRating,
+  // not "offers required". This test previously encoded the wrong rule
+  // (MISSING_REQUIRED on offers); it now asserts the documented conditional rule.
+  it("8. Product missing offers AND review AND aggregateRating — error RICH_RESULTS_REQUIREMENT", () => {
     const { offers, ...noOffers } = validProduct;
     const result = validateSchema(noOffers);
     expect(result.valid).toBe(false);
     expect(
       result.errors.some(
-        (e) => e.code === "MISSING_REQUIRED" && e.path === "offers"
+        (e) => e.code === "RICH_RESULTS_REQUIREMENT" && e.path === "offers"
       )
+    ).toBe(true);
+  });
+
+  it("8b. Product with aggregateRating but no offers is valid (Google one-of rule), with offers only recommended", () => {
+    // The real garnerandtow.com @graph Product: name + aggregateRating + review,
+    // no offers. Google's product-snippet docs accept this; strictly requiring
+    // offers falsely failed it.
+    const { offers, ...noOffers } = validProduct;
+    const withRating = {
+      ...noOffers,
+      aggregateRating: {
+        "@type": "AggregateRating",
+        ratingValue: 5,
+        reviewCount: 1,
+        bestRating: 5,
+        worstRating: 1,
+      },
+    };
+    const result = validateSchema(withRating);
+    expect(result.valid).toBe(true);
+    expect(
+      result.errors.some((e) => e.code === "RICH_RESULTS_REQUIREMENT")
+    ).toBe(false);
+    // offers is still surfaced as a recommendation
+    expect(
+      result.warnings.some(
+        (w) => w.code === "MISSING_RECOMMENDED" && w.path === "offers"
+      )
+    ).toBe(true);
+  });
+
+  it("8c. Product with empty offers object/array still fails the one-of rule", () => {
+    const { offers, ...noOffers } = validProduct;
+    const result = validateSchema({ ...noOffers, offers: [] });
+    expect(
+      result.errors.some((e) => e.code === "RICH_RESULTS_REQUIREMENT")
     ).toBe(true);
   });
 
@@ -818,7 +857,10 @@ describe("Performance", () => {
         availability: "https://schema.org/InStock",
         itemCondition: "https://schema.org/NewCondition",
         url: "https://example.com/bag",
-        priceValidUntil: "2026-12-31",
+        // computed so the fixture never expires (a past date is now a validation error)
+        priceValidUntil: new Date(Date.now() + 365 * 24 * 3600 * 1000)
+          .toISOString()
+          .slice(0, 10),
         seller: {
           "@type": "Organization",
           name: "Luxury Retail",
@@ -836,6 +878,36 @@ describe("Performance", () => {
 // ============================================================
 // 15. Edge cases
 // ============================================================
+
+describe("priceValidUntil expiry (deterministic rule — the LLM is never a quality gate)", () => {
+  const offerWith = (priceValidUntil: string) => ({
+    "@context": "https://schema.org",
+    "@type": "Offer",
+    price: 9.99,
+    priceCurrency: "USD",
+    availability: "https://schema.org/InStock",
+    priceValidUntil,
+  });
+  const daysFromNow = (d: number) =>
+    new Date(Date.now() + d * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+  it("rejects a priceValidUntil in the past", () => {
+    const result = validateSchema(offerWith(daysFromNow(-1)));
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) => e.code === "EXPIRED_PRICE_VALID_UNTIL")
+    ).toBe(true);
+  });
+
+  it("accepts today and future dates", () => {
+    for (const d of [0, 1, 365]) {
+      const result = validateSchema(offerWith(daysFromNow(d)));
+      expect(
+        result.errors.some((e) => e.code === "EXPIRED_PRICE_VALID_UNTIL")
+      ).toBe(false);
+    }
+  });
+});
 
 describe("Edge cases", () => {
   it("55. Accepts http://schema.org as valid @context", () => {

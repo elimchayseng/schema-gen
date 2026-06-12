@@ -27,6 +27,8 @@ export function planTasks(goal: Goal, perceived: PerceivedPage[]): Plan {
       kind: p.hadSchema ? "fix" : "generate",
       beforeErrorCount: p.errorCount,
       beforeHadSchema: p.hadSchema,
+      // Per-page required types (issue #28) ride from perceive to execute untouched.
+      requirements: p.requirements,
     });
   }
 

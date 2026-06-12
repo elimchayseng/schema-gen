@@ -1,0 +1,648 @@
+{
+  "generatedAt": "2026-06-11T03:01:13.299Z",
+  "report": {
+    "runId": "3b5b9b74-5735-4300-9bf5-23a3ae869f10",
+    "siteDomain": "ethan-dev-store-1.myshopify.com",
+    "status": "done",
+    "startedAt": "2026-06-11T02:51:53.418+00:00",
+    "endedAt": "2026-06-11T03:01:13.125+00:00",
+    "verdict": {
+      "goodToGo": true,
+      "headline": "You're good to go",
+      "reason": "All 3 pages checked now carry valid structured data (3 fixed)."
+    },
+    "summary": {
+      "pagesChecked": 3,
+      "alreadyGood": 0,
+      "fixed": 3,
+      "generated": 0,
+      "failed": 0,
+      "notReached": 0
+    },
+    "pages": [
+      {
+        "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax",
+        "schemaTypes": [
+          "Organization",
+          "Product",
+          "BreadcrumbList"
+        ],
+        "before": [
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com/",
+            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "sameAs": [],
+            "@context": "https://schema.org/",
+            "description": "Online store offering premium ski and snowboard products including wax, equipment, and accessories with flexible purchasing and subscription options."
+          },
+          {
+            "sku": "selling-plans-ski-wax",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax",
+            "name": "Selling Plans Ski Wax",
+            "@type": "Product",
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766",
+            "offers": {
+              "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax",
+              "@type": "Offer",
+              "price": "24.95",
+              "availability": "https://schema.org/InStock",
+              "itemCondition": "https://schema.org/NewCondition",
+              "priceCurrency": "USD",
+              "priceValidUntil": "2025-12-31"
+            },
+            "@context": "https://schema.org/",
+            "description": "Premium ski wax available in multiple variants including standard, special, and sample sizes. Offered with flexible purchasing options including one-time purchase, weekly subscription (save 15%), or prepaid annual subscription (save 20%)."
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "@context": "http://schema.org"
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax",
+            "name": "Selling Plans Ski Wax",
+            "@type": "Product",
+            "brand": {
+              "name": "ethan_dev_store_1",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766&width=1920",
+            "offers": {
+              "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax?variant=66832532275245",
+              "@type": "Offer",
+              "price": 24.95,
+              "availability": "https://schema.org/InStock",
+              "priceCurrency": "USD"
+            },
+            "@context": "http://schema.org/",
+            "description": ""
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "@context": "http://schema.org"
+          },
+          {
+            "@id": "/products/selling-plans-ski-wax#product",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax",
+            "name": "Selling Plans Ski Wax",
+            "@type": "ProductGroup",
+            "brand": {
+              "name": "ethan_dev_store_1",
+              "@type": "Brand"
+            },
+            "@context": "http://schema.org/",
+            "category": "accessories",
+            "hasVariant": [
+              {
+                "@id": "/products/selling-plans-ski-wax?variant=66832532275245#variant",
+                "name": "Selling Plans Ski Wax - Selling Plans Ski Wax",
+                "@type": "Product",
+                "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766&width=1920",
+                "offers": {
+                  "@id": "/products/selling-plans-ski-wax?variant=66832532275245#offer",
+                  "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax?variant=66832532275245",
+                  "@type": "Offer",
+                  "price": "24.95",
+                  "availability": "http://schema.org/InStock",
+                  "priceCurrency": "USD"
+                }
+              },
+              {
+                "@id": "/products/selling-plans-ski-wax?variant=66832532308013#variant",
+                "name": "Selling Plans Ski Wax - Special Selling Plans Ski Wax",
+                "@type": "Product",
+                "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766&width=1920",
+                "offers": {
+                  "@id": "/products/selling-plans-ski-wax?variant=66832532308013#offer",
+                  "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax?variant=66832532308013",
+                  "@type": "Offer",
+                  "price": "49.95",
+                  "availability": "http://schema.org/InStock",
+                  "priceCurrency": "USD"
+                }
+              },
+              {
+                "@id": "/products/selling-plans-ski-wax?variant=66832532340781#variant",
+                "name": "Selling Plans Ski Wax - Sample Selling Plans Ski Wax",
+                "@type": "Product",
+                "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766&width=1920",
+                "offers": {
+                  "@id": "/products/selling-plans-ski-wax?variant=66832532340781#offer",
+                  "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax?variant=66832532340781",
+                  "@type": "Offer",
+                  "price": "9.95",
+                  "availability": "http://schema.org/InStock",
+                  "priceCurrency": "USD"
+                }
+              }
+            ],
+            "description": "",
+            "productGroupID": "15126223552557"
+          }
+        ],
+        "after": [
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com/",
+            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "sameAs": [],
+            "@context": "https://schema.org/",
+            "description": "Ecommerce store specializing in ski and snowboard equipment and maintenance products."
+          },
+          {
+            "sku": "selling-plans-ski-wax",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax",
+            "name": "Selling Plans Ski Wax",
+            "@type": "Product",
+            "brand": {
+              "name": "Ethan Dev Store 1",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/snowboard_wax.png?v=1780761766",
+            "offers": {
+              "url": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax",
+              "@type": "Offer",
+              "price": "24.95",
+              "availability": "https://schema.org/InStock",
+              "priceCurrency": "USD",
+              "priceValidUntil": "2025-12-31"
+            },
+            "@context": "https://schema.org/",
+            "description": "High-quality ski wax designed to enhance your skiing performance. Available in multiple formulations including golden yellow standard wax, purple special wax, and compact sample cubes. Perfect for maintaining your ski equipment in optimal condition."
+          },
+          {
+            "name": "Breadcrumb Navigation",
+            "@type": "BreadcrumbList",
+            "@context": "https://schema.org/",
+            "description": "Navigation path showing the location of Selling Plans Ski Wax within the site hierarchy",
+            "itemListElement": [
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/",
+                "name": "Home",
+                "@type": "ListItem",
+                "position": 1
+              },
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/collections/all",
+                "name": "Products",
+                "@type": "ListItem",
+                "position": 2
+              },
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax",
+                "name": "Selling Plans Ski Wax",
+                "@type": "ListItem",
+                "position": 3
+              }
+            ]
+          }
+        ],
+        "googleTestUrl": "https://search.google.com/test/rich-results?url=https%3A%2F%2Fethan-dev-store-1.myshopify.com%2Fproducts%2Fselling-plans-ski-wax",
+        "disposition": "fixed",
+        "gates": [
+          {
+            "level": "L0",
+            "label": "Built",
+            "passed": true
+          },
+          {
+            "level": "L1",
+            "label": "Valid",
+            "passed": true
+          },
+          {
+            "level": "L2",
+            "label": "Rich-eligible",
+            "passed": true
+          },
+          {
+            "level": "L3",
+            "label": "No-regression",
+            "passed": true,
+            "detail": "errors 0 <= prior 1"
+          },
+          {
+            "level": "L4",
+            "label": "Live-verified",
+            "passed": true,
+            "detail": "live render carries valid Product, BreadcrumbList"
+          }
+        ]
+      },
+      {
+        "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
+        "schemaTypes": [
+          "Organization",
+          "Product",
+          "BreadcrumbList"
+        ],
+        "before": [
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com/",
+            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_b13ad453-477c-4ed1-9b43-81f3345adfd6.jpg?v=1780761767",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "sameAs": [],
+            "@context": "https://schema.org/",
+            "description": "Online retailer specializing in premium snowboards and winter sports equipment, featuring brands like Hydrogen."
+          },
+          {
+            "sku": "66832532832301",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
+            "name": "The 3p Fulfilled Snowboard",
+            "@type": "Product",
+            "brand": {
+              "name": "Hydrogen",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_b9e0da7f-db89-4d41-83f0-7f417b02831d.jpg?v=1780761766",
+            "offers": {
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
+              "@type": "Offer",
+              "price": "2629.95",
+              "availability": "https://schema.org/SoldOut",
+              "itemCondition": "https://schema.org/NewCondition",
+              "priceCurrency": "USD",
+              "priceValidUntil": "2025-12-31"
+            },
+            "@context": "https://schema.org/",
+            "description": "A high-performance snowboard featuring a distinctive hexagonal design pattern. The top view displays 7 stacked hexagons while the bottom showcases a centered hexagonal Hydrogen logo. This premium snowboard is designed for serious riders seeking quality and style on the slopes."
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "@context": "http://schema.org"
+          },
+          {
+            "sku": "sku-hosted-1",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
+            "name": "The 3p Fulfilled Snowboard",
+            "@type": "Product",
+            "brand": {
+              "name": "ethan_dev_store_1",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_b9e0da7f-db89-4d41-83f0-7f417b02831d.jpg?v=1780761766&width=1920",
+            "offers": {
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard?variant=66832532832301",
+              "@type": "Offer",
+              "price": 2629.95,
+              "availability": "https://schema.org/OutOfStock",
+              "priceCurrency": "USD"
+            },
+            "@context": "http://schema.org/",
+            "description": ""
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "@context": "http://schema.org"
+          },
+          {
+            "@id": "/products/the-3p-fulfilled-snowboard#product",
+            "sku": "sku-hosted-1",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
+            "name": "The 3p Fulfilled Snowboard",
+            "@type": "Product",
+            "brand": {
+              "name": "ethan_dev_store_1",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_b9e0da7f-db89-4d41-83f0-7f417b02831d.jpg?v=1780761766&width=1920",
+            "offers": {
+              "@id": "/products/the-3p-fulfilled-snowboard?variant=66832532832301#offer",
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard?variant=66832532832301",
+              "@type": "Offer",
+              "price": "2629.95",
+              "availability": "http://schema.org/OutOfStock",
+              "priceCurrency": "USD"
+            },
+            "@context": "http://schema.org/",
+            "category": "snowboard",
+            "description": ""
+          }
+        ],
+        "after": [
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com/",
+            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/logo.png",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "sameAs": [],
+            "@context": "https://schema.org/",
+            "description": "Premium snowboard and winter sports equipment retailer"
+          },
+          {
+            "sku": "66832532832301",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
+            "name": "The 3p Fulfilled Snowboard",
+            "@type": "Product",
+            "brand": {
+              "name": "Hydrogen",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_b9e0da7f-db89-4d41-83f0-7f417b02831d.jpg?v=1780761766",
+            "offers": {
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
+              "@type": "Offer",
+              "price": "2629.95",
+              "availability": "https://schema.org/OutOfStock",
+              "priceCurrency": "USD"
+            },
+            "@context": "https://schema.org/",
+            "description": "The 3p Fulfilled Snowboard is a premium snowboard featuring a distinctive hexagonal design pattern. Top and bottom view shows 7 stacked hexagons with a centered hexagonal logo for Hydrogen brand."
+          },
+          {
+            "name": "Breadcrumb Navigation",
+            "@type": "BreadcrumbList",
+            "@context": "https://schema.org/",
+            "description": "Navigation path showing the location of The 3p Fulfilled Snowboard within the site hierarchy",
+            "itemListElement": [
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/",
+                "name": "Home",
+                "@type": "ListItem",
+                "position": 1
+              },
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/collections/all",
+                "name": "Products",
+                "@type": "ListItem",
+                "position": 2
+              },
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard",
+                "name": "The 3p Fulfilled Snowboard",
+                "@type": "ListItem",
+                "position": 3
+              }
+            ]
+          }
+        ],
+        "googleTestUrl": "https://search.google.com/test/rich-results?url=https%3A%2F%2Fethan-dev-store-1.myshopify.com%2Fproducts%2Fthe-3p-fulfilled-snowboard",
+        "disposition": "fixed",
+        "gates": [
+          {
+            "level": "L0",
+            "label": "Built",
+            "passed": true
+          },
+          {
+            "level": "L1",
+            "label": "Valid",
+            "passed": true
+          },
+          {
+            "level": "L2",
+            "label": "Rich-eligible",
+            "passed": true
+          },
+          {
+            "level": "L3",
+            "label": "No-regression",
+            "passed": true,
+            "detail": "errors 0 <= prior 0"
+          },
+          {
+            "level": "L4",
+            "label": "Live-verified",
+            "passed": true,
+            "detail": "live render carries valid Product, BreadcrumbList"
+          }
+        ]
+      },
+      {
+        "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen",
+        "schemaTypes": [
+          "Organization",
+          "Product",
+          "BreadcrumbList"
+        ],
+        "before": [
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com/",
+            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/logo.png",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "sameAs": [],
+            "@context": "https://schema.org/",
+            "description": "ethan_dev_store_1 is an online store offering quality products including snowboards and sporting goods."
+          },
+          {
+            "sku": "66832532045869",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen",
+            "name": "The Collection Snowboard: Hydrogen",
+            "@type": "Product",
+            "brand": {
+              "name": "ethan_dev_store_1",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_0a40b01b-5021-48c1-80d1-aa8ab4876d3d.jpg?v=1780761765",
+            "offers": {
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen",
+              "@type": "Offer",
+              "price": "600.00",
+              "seller": {
+                "url": "https://ethan-dev-store-1.myshopify.com",
+                "name": "ethan_dev_store_1",
+                "@type": "Organization"
+              },
+              "availability": "https://schema.org/InStock",
+              "priceCurrency": "USD",
+              "priceValidUntil": "2025-12-31"
+            },
+            "@context": "https://schema.org/",
+            "description": "The Collection Snowboard: Hydrogen is a premium snowboard featuring stylized hydrogen bonds on the top view and 'H2' in a brush script typeface on the bottom. Perfect for snowboarding enthusiasts looking for quality and style."
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "@context": "http://schema.org"
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen",
+            "name": "The Collection Snowboard: Hydrogen",
+            "@type": "Product",
+            "brand": {
+              "name": "Hydrogen Vendor",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_0a40b01b-5021-48c1-80d1-aa8ab4876d3d.jpg?v=1780761765&width=1920",
+            "offers": {
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen?variant=66832532045869",
+              "@type": "Offer",
+              "price": 600,
+              "availability": "https://schema.org/InStock",
+              "priceCurrency": "USD"
+            },
+            "@context": "http://schema.org/",
+            "description": ""
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "@context": "http://schema.org"
+          },
+          {
+            "@id": "/products/the-collection-snowboard-hydrogen#product",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen",
+            "name": "The Collection Snowboard: Hydrogen",
+            "@type": "Product",
+            "brand": {
+              "name": "Hydrogen Vendor",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_0a40b01b-5021-48c1-80d1-aa8ab4876d3d.jpg?v=1780761765&width=1920",
+            "offers": {
+              "@id": "/products/the-collection-snowboard-hydrogen?variant=66832532045869#offer",
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen?variant=66832532045869",
+              "@type": "Offer",
+              "price": "600.00",
+              "availability": "https://schema.org/InStock",
+              "priceCurrency": "USD"
+            },
+            "@context": "http://schema.org/",
+            "description": ""
+          },
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "@context": "http://schema.org"
+          },
+          {
+            "@id": "/products/the-collection-snowboard-hydrogen#product",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen",
+            "name": "The Collection Snowboard: Hydrogen",
+            "@type": "Product",
+            "brand": {
+              "name": "Hydrogen Vendor",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_0a40b01b-5021-48c1-80d1-aa8ab4876d3d.jpg?v=1780761765&width=1920",
+            "offers": {
+              "@id": "/products/the-collection-snowboard-hydrogen?variant=66832532045869#offer",
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen?variant=66832532045869",
+              "@type": "Offer",
+              "price": "600.00",
+              "availability": "http://schema.org/InStock",
+              "priceCurrency": "USD"
+            },
+            "@context": "http://schema.org/",
+            "category": "snowboard",
+            "description": ""
+          }
+        ],
+        "after": [
+          {
+            "url": "https://ethan-dev-store-1.myshopify.com/",
+            "logo": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/logo.png",
+            "name": "ethan_dev_store_1",
+            "@type": "Organization",
+            "sameAs": [],
+            "@context": "https://schema.org/",
+            "description": "ethan_dev_store_1 is an online store offering premium snowboards and winter sports equipment."
+          },
+          {
+            "@id": "/products/the-collection-snowboard-hydrogen#product",
+            "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen",
+            "name": "The Collection Snowboard: Hydrogen",
+            "@type": "Product",
+            "brand": {
+              "name": "Hydrogen Vendor",
+              "@type": "Brand"
+            },
+            "image": "https://ethan-dev-store-1.myshopify.com/cdn/shop/files/Main_0a40b01b-5021-48c1-80d1-aa8ab4876d3d.jpg?v=1780761765&width=1920",
+            "offers": {
+              "@id": "/products/the-collection-snowboard-hydrogen?variant=66832532045869#offer",
+              "url": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen?variant=66832532045869",
+              "@type": "Offer",
+              "price": "600.00",
+              "availability": "https://schema.org/InStock",
+              "priceCurrency": "USD"
+            },
+            "@context": "http://schema.org/",
+            "description": ""
+          },
+          {
+            "name": "Product Navigation Breadcrumb",
+            "@type": "BreadcrumbList",
+            "@context": "https://schema.org/",
+            "description": "Breadcrumb navigation showing the path from homepage through products to The Collection Snowboard: Hydrogen",
+            "itemListElement": [
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/",
+                "name": "Home",
+                "@type": "ListItem",
+                "position": 1
+              },
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/collections/all",
+                "name": "Products",
+                "@type": "ListItem",
+                "position": 2
+              },
+              {
+                "item": "https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen",
+                "name": "The Collection Snowboard: Hydrogen",
+                "@type": "ListItem",
+                "position": 3
+              }
+            ]
+          }
+        ],
+        "googleTestUrl": "https://search.google.com/test/rich-results?url=https%3A%2F%2Fethan-dev-store-1.myshopify.com%2Fproducts%2Fthe-collection-snowboard-hydrogen",
+        "disposition": "fixed",
+        "gates": [
+          {
+            "level": "L0",
+            "label": "Built",
+            "passed": true
+          },
+          {
+            "level": "L1",
+            "label": "Valid",
+            "passed": true
+          },
+          {
+            "level": "L2",
+            "label": "Rich-eligible",
+            "passed": true
+          },
+          {
+            "level": "L3",
+            "label": "No-regression",
+            "passed": true,
+            "detail": "errors 0 <= prior 0"
+          },
+          {
+            "level": "L4",
+            "label": "Live-verified",
+            "passed": true,
+            "detail": "live render carries valid Product, BreadcrumbList"
+          }
+        ]
+      }
+    ],
+    "requiredMerchantActions": [
+      "Publish theme 185610797101 — the verified schema was applied to an unpublished (staged) theme and only reaches shoppers once that theme is published.",
+      "An app injects Organization structured data on https://ethan-dev-store-1.myshopify.com/products/selling-plans-ski-wax that SchemaGen cannot remove via theme edits — disable that app's structured-data output to avoid duplicate markup.",
+      "An app injects Organization structured data on https://ethan-dev-store-1.myshopify.com/products/the-3p-fulfilled-snowboard that SchemaGen cannot remove via theme edits — disable that app's structured-data output to avoid duplicate markup.",
+      "An app injects Organization structured data on https://ethan-dev-store-1.myshopify.com/products/the-collection-snowboard-hydrogen that SchemaGen cannot remove via theme edits — disable that app's structured-data output to avoid duplicate markup."
+    ],
+    "proof": {
+      "schemaGenLabel": "Validated by SchemaGen (deterministic gates L0–L4)",
+      "googleLabel": "Confirm with Google"
+    }
+  }
+}

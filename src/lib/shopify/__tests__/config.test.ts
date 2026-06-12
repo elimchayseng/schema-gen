@@ -4,6 +4,7 @@ import {
   canMintTokens,
   getOfflineToken,
   getShopifyConfig,
+  getShopifyConfigForShop,
   invalidateTokenCache,
   mintToken,
   normalizeShop,
@@ -76,6 +77,32 @@ describe("getShopifyConfig", () => {
   it("rejects a hostile shop value via the SSRF guard", () => {
     process.env.SHOPIFY_SHOP = "evil.com/";
     expect(() => getShopifyConfig()).toThrow(/Refusing to contact/);
+  });
+});
+
+describe("getShopifyConfigForShop (per-shop, issue #25)", () => {
+  const saved = { ...process.env };
+  beforeEach(() => {
+    delete process.env.SHOPIFY_SHOP;
+    delete process.env.SHOPIFY_API_VERSION;
+  });
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+
+  it("builds a config for an explicit shop, ignoring env SHOPIFY_SHOP", () => {
+    process.env.SHOPIFY_SHOP = "env-store";
+    const cfg = getShopifyConfigForShop("garnerandtow");
+    expect(cfg.shop).toBe("garnerandtow.myshopify.com");
+    expect(cfg.baseUrl).toBe(
+      `https://garnerandtow.myshopify.com/admin/api/${DEFAULT_API_VERSION}`
+    );
+  });
+
+  it("rejects a hostile shop via the SSRF guard", () => {
+    expect(() => getShopifyConfigForShop("evil.com/")).toThrow(
+      /Refusing to contact/
+    );
   });
 });
 
@@ -222,6 +249,81 @@ describe("token minting (app creds present)", () => {
     expect(await getOfflineToken("mint-store.myshopify.com")).toBe("shpat_zero");
     expect(await getOfflineToken("mint-store.myshopify.com")).toBe("shpat_fresh");
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("mints with explicit per-shop credentials over the env pair (issue #25)", async () => {
+    mockFetch.mockResolvedValue(
+      oauthResponse({ access_token: "shpat_pershop", expires_in: 86399 })
+    );
+    invalidateTokenCache("garnerandtow.myshopify.com");
+    const token = await getOfflineToken("garnerandtow.myshopify.com", {
+      appKey: "per-shop-id",
+      appSecret: "per-shop-secret",
+    });
+    expect(token).toBe("shpat_pershop");
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(
+      "https://garnerandtow.myshopify.com/admin/oauth/access_token"
+    );
+    expect(init.body).toContain("client_id=per-shop-id");
+    expect(init.body).not.toContain("client-id-123"); // env pair NOT used
+  });
+
+  it("mints with per-shop credentials even when env has none", async () => {
+    delete process.env.SHOPIFY_APP_KEY;
+    delete process.env.SHOPIFY_APP_SECRET;
+    mockFetch.mockResolvedValue(
+      oauthResponse({ access_token: "shpat_noenv", expires_in: 86399 })
+    );
+    invalidateTokenCache("garnerandtow.myshopify.com");
+    const token = await getOfflineToken("garnerandtow.myshopify.com", {
+      appKey: "per-shop-id",
+      appSecret: "per-shop-secret",
+    });
+    expect(token).toBe("shpat_noenv");
+  });
+
+  it("caches per shop: two shops mint independently and never collide", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        oauthResponse({ access_token: "shpat_shop_a", expires_in: 86399 })
+      )
+      .mockResolvedValueOnce(
+        oauthResponse({ access_token: "shpat_shop_b", expires_in: 86399 })
+      );
+    invalidateTokenCache("shop-a.myshopify.com");
+    invalidateTokenCache("shop-b.myshopify.com");
+    const credsA = { appKey: "id-a", appSecret: "sec-a" };
+    const credsB = { appKey: "id-b", appSecret: "sec-b" };
+
+    expect(await getOfflineToken("shop-a.myshopify.com", credsA)).toBe(
+      "shpat_shop_a"
+    );
+    expect(await getOfflineToken("shop-b.myshopify.com", credsB)).toBe(
+      "shpat_shop_b"
+    );
+    // Both served from their own cache entries now: no extra mints.
+    expect(await getOfflineToken("shop-a.myshopify.com", credsA)).toBe(
+      "shpat_shop_a"
+    );
+    expect(await getOfflineToken("shop-b.myshopify.com", credsB)).toBe(
+      "shpat_shop_b"
+    );
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("never logs a per-shop client secret when minting", async () => {
+    mockFetch.mockResolvedValue(
+      oauthResponse({ access_token: "shpat_y", expires_in: 86399 })
+    );
+    await mintToken("garnerandtow.myshopify.com", {
+      appKey: "per-shop-id",
+      appSecret: "per-shop-secret",
+    });
+    const logged = logSpy.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .join("\n");
+    expect(logged).not.toContain("per-shop-secret");
   });
 
   it("single-flights concurrent cold-cache mints into one OAuth call", async () => {

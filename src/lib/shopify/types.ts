@@ -12,6 +12,26 @@ export interface ShopifyConfig {
   baseUrl: string;
 }
 
+/** client_credentials app key pair used to mint Admin API tokens for a shop. */
+export interface ShopAppCredentials {
+  appKey: string;
+  appSecret: string;
+}
+
+/**
+ * Per-shop request context (issue #25). When passed to shopifyFetch / the asset
+ * + theme helpers, all calls target `shop` and tokens are minted with
+ * `credentials`. When omitted, everything falls back to the env-configured
+ * shop (SHOPIFY_SHOP / SHOPIFY_APP_KEY / SHOPIFY_APP_SECRET) — the pre-#25
+ * single-store behavior, unchanged.
+ */
+export interface ShopContext {
+  /** Shop host; normalized via normalizeShop before use. */
+  shop: string;
+  /** Per-shop app credentials for token minting; env credentials when omitted. */
+  credentials?: ShopAppCredentials;
+}
+
 export interface ShopifyTheme {
   id: number;
   name: string;

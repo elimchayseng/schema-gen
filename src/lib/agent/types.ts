@@ -3,15 +3,32 @@
  * artifacts the planner/executor/audit pass around.
  */
 import type { PageStatus } from "@/lib/crawl/types";
+import type { ExtractedJsonLd } from "@/lib/url-validator/types";
 
-export type GoalScope = "all_products" | "all_pages" | "url_list";
+export type GoalScope = "site" | "all_products" | "all_pages" | "url_list";
 export type MinOutcome = "valid" | "rich_results_eligible";
+
+/**
+ * One schema type a page must carry, with the bar THAT type must clear. Issue #28:
+ * rich-results-requirements marks WebSite/CollectionPage/etc. permanently ineligible,
+ * so a single global rich bar over a mixed type set would be unsatisfiable — the bar
+ * has to travel per type. `outcome: "valid"` types are only ever required to validate;
+ * `outcome: "rich_results_eligible"` types are held to the rich bar only when the
+ * goal's minOutcome also demands it (see requirementsForPage in page-type-matrix.ts).
+ */
+export interface TypeRequirement {
+  type: string;
+  outcome: MinOutcome;
+}
 
 export interface GoalTarget {
   scope: GoalScope;
   /** Required when scope is "url_list". */
   urls?: string[];
-  /** Schema types each target page must have, e.g. ["Product"]. */
+  /**
+   * Schema types each target page must have, e.g. ["Product"]. Ignored for scope
+   * "site", where per-page requirements come from the page-type matrix instead.
+   */
   requireTypes: string[];
   minOutcome: MinOutcome;
 }
@@ -23,6 +40,17 @@ export interface GoalConstraints {
   maxCostUsd?: number;
   /** Gate novel type changes if false — reserved for Phase 3. */
   allowSchemaTypeChange: boolean;
+  /**
+   * Authoritative override mode (issue #23). When on, a live apply also SUPPRESSES
+   * competing theme JSON-LD emissions (any theme asset that emits a type SchemaGen
+   * manages on that page type, or an invalid/unparseable block) on the write-target
+   * theme, and the post-write verify demands EXACTLY ONE valid block per required
+   * type (the duplicate-prevention gate, issue #24). Blocks injected by apps
+   * (external) cannot be removed via theme edits and become requiredMerchantActions.
+   * Defaults to true for scope "site", false otherwise — so the pre-integration
+   * behavior of every non-site goal is unchanged.
+   */
+  authoritative?: boolean;
 }
 
 export interface Goal {
@@ -32,6 +60,12 @@ export interface Goal {
   constraints: GoalConstraints;
   /** Locked to auto_apply per plan §4; Phase 2 always runs dry-run regardless. */
   autonomy: "auto_apply";
+  /**
+   * Mirror of RunOptions.dryRun, persisted with the goal in agent_runs so the
+   * run route's concurrency guard can tell live runs from dry runs. RunOptions
+   * remains the execution-time source of truth.
+   */
+  dryRun?: boolean;
 }
 
 // ---- Gates (plan §6) ----
@@ -53,18 +87,12 @@ export interface GateResults {
    * for staged-but-not-applied pages (the live render doesn't exist yet).
    */
   L4?: GateResult | null;
-  /**
-   * L6 soft LLM judge (plan §6, Phase 5): "does this schema match the page's intent?".
-   * SOFT and informational ONLY — `gatesPassed` deliberately ignores it, so it can never
-   * block a commit. null/absent when the judge is disabled (the default) or unavailable.
-   */
-  L6?: GateResult | null;
 }
 
 /**
- * Pre-apply gate verdict (L0–L3). L4 and L6 are deliberately excluded: L4 can only be
- * evaluated AFTER a write (it fetches the live render) and is checked separately in the
- * apply path; L6 is a SOFT LLM judge that only logs and must never block a commit.
+ * Pre-apply gate verdict (L0–L3). L4 is deliberately excluded: it can only be
+ * evaluated AFTER a write (it fetches the live render) and is checked separately in
+ * the apply path.
  */
 export function gatesPassed(g: GateResults): boolean {
   return (
@@ -86,6 +114,20 @@ export interface PerceivedPage {
   hadSchema: boolean;
   /** Already meets the goal (its live schema is valid for the required types). */
   satisfied: boolean;
+  /**
+   * This page's required types with their per-type bars (issue #28). Absent means
+   * "uniform from the goal" — derived from target.requireTypes + minOutcome — which
+   * keeps every pre-matrix caller and fixture working unchanged.
+   */
+  requirements?: TypeRequirement[];
+  /**
+   * The raw JSON-LD blocks of the live render, exactly as the perceive scan's
+   * extractor saw them (raw text + parse result + position). Carried so
+   * authoritative mode (issue #23) can classify each block's ORIGIN via the
+   * schema source locator without re-fetching the page. Absent on fetch
+   * failures and for pre-#23 fixtures.
+   */
+  renderedBlocks?: ExtractedJsonLd[] | null;
 }
 
 export interface PlannedTask {
@@ -93,6 +135,8 @@ export interface PlannedTask {
   kind: TaskKind;
   beforeErrorCount: number;
   beforeHadSchema: boolean;
+  /** Carried verbatim from the perceived page (see PerceivedPage.requirements). */
+  requirements?: TypeRequirement[];
 }
 
 // ---- Audit ----
@@ -103,7 +147,13 @@ export type ActionKind =
   | "write"
   | "verify"
   | "rollback"
-  | "skip";
+  | "skip"
+  /** Authoritative mode (issue #23): a competing theme emission was reversibly silenced. */
+  | "suppress"
+  /** Structured "the merchant must do X" record (e.g. app-injected schema we can't remove). */
+  | "merchant_action"
+  /** Staging mode (issue #26): the staging theme was published (atomic swap). */
+  | "publish";
 
 export interface ActionRecord {
   url: string;
@@ -156,21 +206,38 @@ export interface ApplyResult {
   writeTarget: string | null;
   /** Per-entry L4 verdicts, in entry order. */
   l4: (GateResult | null)[];
-  /** Audit rows produced by the apply (write / verify / rollback). */
+  /** Audit rows produced by the apply (write / verify / suppress / rollback). */
   actions: ActionRecord[];
   /** Set when status="paged": the theme was left dirty (rollback failed). */
   error?: string;
+  /**
+   * Theme asset keys whose competing JSON-LD emissions were suppressed as part of
+   * this apply's managed footprint (issue #23). Suppressed assets are backed up and
+   * restored byte-identical by the same rollback that covers theme.liquid/snippet.
+   * Absent/empty when nothing was suppressed (non-authoritative runs).
+   */
+  suppressedAssets?: string[];
 }
 
 // ---- Streaming + cancellation (plan §9, Phase 4) ----
 
-/** Coarse phase of the loop, for progress events. */
-export type AgentPhase = "perceive" | "plan" | "act" | "apply" | "done";
+/**
+ * Coarse phase of the loop, for progress events. "stage" (preparing the staging
+ * theme duplicate — slow, O(assets) Asset API calls) and "publish" (atomic swap of
+ * the verified staging theme to live) only occur under writeTheme mode "staging".
+ */
+export type AgentPhase =
+  | "perceive"
+  | "plan"
+  | "act"
+  | "stage"
+  | "apply"
+  | "publish"
+  | "done";
 
 /**
  * Cross-request control signal (agent_runs.control). "run" = continue.
- * "kill" halts at the next checkpoint (never mid-apply). "pause" is reserved for
- * Phase 5 durable pause/resume and is treated as "run" by Phase 4's loop.
+ * "kill" halts at the next checkpoint (never mid-apply).
  */
 export type HaltSignal = "run" | "kill";
 
@@ -188,6 +255,12 @@ export interface AgentProgressEvent {
   /** L0–L4 gate results for this page (act / apply). */
   gates?: GateResults | null;
   /**
+   * The exact JSON-LD that would be injected for this page (act). Carried on the stream so
+   * the dashboard can show a per-product "structured data to be injected" dropdown inline,
+   * without a follow-up DB read. A single object or an array of objects.
+   */
+  schemaAfter?: unknown;
+  /**
    * The executor's per-page outcome for this page (act). Distinguishes a clean gate
    * rejection ("gate_failed") from an upstream AI/processing failure
    * ("processing_failed: …") and a staged success ("staged"). Phase 7 surfaces this as
@@ -202,11 +275,94 @@ export interface AgentProgressEvent {
   unsatisfied?: number;
   /** Present on phase "apply" / "done" once the live apply has run. */
   applyStatus?: ApplyStatus;
-  /** Human-readable note, e.g. a breaker reason or "killed". */
+  /**
+   * Merchant-reviewable preview URL of the staging theme
+   * (`https://<shop>/?preview_theme_id=<id>`). Carried on "stage" events once the
+   * duplicate is ready, so the UI can link it before the apply even finishes.
+   */
+  previewUrl?: string;
+  /** Human-readable note, e.g. a breaker reason, "killed", or a staging/publish status. */
   message?: string;
+  /**
+   * Uniform step contract: a named checkpoint inside the phase (e.g. "perceive.scan",
+   * "apply.write", "publish.swap"). Every step emits status "start" then "ok"/"fail"
+   * (with durationMs); "skip" marks a checkpoint deliberately not run. The same event
+   * is persisted to agent_runs.last_step, so the CLI (onProgress), the SSE UI, and the
+   * replay GET all show one truth about where a run is.
+   *
+   * RESERVED: the SSE route uses top-level `step: "done"` / `step: "error"` as its
+   * terminal-frame discriminator — never name a progress step "done" or "error".
+   */
+  step?: string;
+  status?: "start" | "ok" | "fail" | "skip";
+  durationMs?: number;
+  /** Short step-scoped detail (an error message, a count, an asset key). */
+  detail?: string;
 }
 
 // ---- Run ----
+
+/**
+ * Where a live (dryRun:false) apply writes (issues #25/#26).
+ *
+ *   { mode: "env" }      — today's behavior, the default: write to the env-configured
+ *                          SHOPIFY_TEST_THEME_ID. Byte-identical to the pre-staging path.
+ *   { mode: "staging" }  — duplicate the PUBLISHED theme (prepareStagingTheme — slow,
+ *                          O(assets) Asset API calls), write the managed footprint +
+ *                          suppressions to the duplicate, L4-verify via its
+ *                          preview_theme_id, and, when `publish` is true AND every gate
+ *                          is green, themePublish() it (atomic swap). The previously
+ *                          published theme is kept as the rollback artifact. On ANY gate
+ *                          failure nothing is published — the live store was never
+ *                          touched — and the duplicate is deleted best-effort.
+ */
+export type WriteThemeStrategy =
+  | { mode: "env" }
+  | { mode: "staging"; publish: boolean };
+
+/**
+ * Outcome of post-publish verification (post-publish.ts): the touched pages
+ * re-verified at their REAL urls after themePublish, with the freshness proof
+ * separating "Shopify's page cache hasn't converged" (stale — publish stands,
+ * re-check later) from "the published render is genuinely wrong" (failed — the
+ * displaced theme is auto-republished).
+ */
+export interface PostPublishOutcome {
+  status: "verified" | "stale" | "failed";
+  /** Per-page verdicts, in apply order. */
+  pages: Array<{
+    url: string;
+    status: "pass" | "stale" | "fail";
+    detail?: string;
+    attempts: number;
+  }>;
+  /**
+   * Only meaningful when status="failed": true — the displaced theme was
+   * republished (clean auto-rollback); false — the republish itself failed and
+   * a human must publish the rollback theme by hand (run status "paged").
+   */
+  rolledBack?: boolean;
+}
+
+/** What the staging flow produced (RunResult.staging; null/absent outside staging mode). */
+export interface StagingOutcome {
+  stagingThemeId: number;
+  /** Merchant-reviewable URL (live storefront rendered with the staging theme). */
+  previewUrl: string;
+  /** The theme that was duplicated (the published theme). */
+  sourceThemeId: number;
+  /** True once themePublish() swapped the staging theme live. */
+  published: boolean;
+  /**
+   * Set when published: the previously-published theme id — the rollback artifact.
+   * Re-publishing this theme undoes the swap entirely.
+   */
+  rollbackThemeId?: number;
+  /** True when a failed run deleted the staging duplicate (best-effort cleanup). */
+  deleted?: boolean;
+  /** Post-publish verification verdict (only set when the theme was published). */
+  postPublish?: PostPublishOutcome;
+}
 
 export interface RunOptions {
   /**
@@ -249,11 +405,10 @@ export interface RunOptions {
    */
   resume?: boolean;
   /**
-   * Run the SOFT L6 LLM judge per acted page (Phase 5). Default false. When on, the
-   * judge's verdict is recorded as gates.L6 but NEVER affects pass/fail — it only logs.
-   * Off keeps the path inert (no extra LLM calls), so unit tests stay deterministic.
+   * Live-apply write target strategy (issues #25/#26). Default { mode: "env" } —
+   * the pre-staging SHOPIFY_TEST_THEME_ID behavior. See WriteThemeStrategy.
    */
-  judge?: boolean;
+  writeTheme?: WriteThemeStrategy;
 }
 
 export interface RunResult {
@@ -285,5 +440,7 @@ export interface RunResult {
    * show "Killed" distinctly. When killed before the apply, no theme write happened.
    */
   killed?: boolean;
+  /** Staging-mode outcome (issue #26). null/absent under writeTheme mode "env". */
+  staging?: StagingOutcome | null;
   actions: ActionRecord[];
 }

@@ -6,6 +6,7 @@ import Link from "next/link";
 // barrel re-exports runGoal/audit → supabase → node:crypto, which a client bundle can't
 // resolve. Types from the barrel are fine (erased at compile time).
 import { groupRunPages, type RunPageGroups } from "@/lib/agent/run-grouping";
+import SchemaTweakPanel from "@/components/agent/SchemaTweakPanel";
 import type {
   AgentProgressEvent,
   ApplyResult,
@@ -13,7 +14,30 @@ import type {
   GateResults,
   GoalScope,
   MinOutcome,
+  StagingOutcome,
 } from "@/lib/agent";
+
+/**
+ * The most recent agent_runs row for this site, fetched server-side by page.tsx so a
+ * remount (reload, navigation) shows where the last run ended instead of a blank form.
+ * `last_step` is the persisted uniform step checkpoint (migration 013) — null until
+ * the migration is applied or for runs predating it.
+ */
+export interface LastRun {
+  id: string;
+  status: string;
+  started_at: string | null;
+  ended_at: string | null;
+  error: string | null;
+  last_step?: {
+    phase?: string;
+    step?: string | null;
+    status?: string | null;
+    url?: string | null;
+    detail?: string | null;
+    at?: string | null;
+  } | null;
+}
 
 interface DoneSummary {
   status: string;
@@ -26,14 +50,29 @@ interface DoneSummary {
   haltedBy: string | null;
   stagedSnippet: string | null;
   apply: ApplyResult | null;
+  /** Staging-mode outcome (issue #26): preview URL, publish state, rollback theme. */
+  staging?: StagingOutcome | null;
   error?: string;
 }
+
+/**
+ * Client-side write-target modes, mirroring the run route's string enum. Staging
+ * modes duplicate the published theme and need the site provisioned with Shopify
+ * credentials (sites.shop_domain); "env" is the test-theme behavior.
+ */
+const WRITE_MODES: { value: string; label: string; needsShop: boolean }[] = [
+  { value: "env", label: "Test theme (safe default)", needsShop: false },
+  { value: "staging", label: "Staging preview (duplicate of live theme)", needsShop: true },
+  { value: "staging_publish", label: "Staging + auto-publish when verified", needsShop: true },
+];
 
 /** An acted page, as observed on the live stream. */
 interface PageRow {
   url: string;
   gates: GateResults | null;
   outcome?: string;
+  /** The exact JSON-LD that would be injected for this page (from the stream). */
+  schemaAfter?: unknown;
 }
 
 /** Lazily-loaded per-page before/after, fetched from the run-detail endpoint on expand. */
@@ -220,12 +259,21 @@ export default function AgentRunner({
   crawlId,
   siteId,
   domain,
+  hasShopCredentials = false,
+  lastRun = null,
 }: {
   crawlId: string;
   siteId: string;
   domain: string;
+  /** True when the site row carries shop_domain — unlocks the staging write modes. */
+  hasShopCredentials?: boolean;
+  /** The site's most recent run, for the rehydrate-on-mount "Last run" card. */
+  lastRun?: LastRun | null;
 }) {
   const [scope, setScope] = useState<GoalScope>("all_products");
+  const [writeMode, setWriteMode] = useState("env");
+  // Staging progress (issue #26): the duplicate's preview URL + the latest stage/publish note.
+  const [stageInfo, setStageInfo] = useState<{ message?: string; previewUrl?: string }>({});
   const [requireTypesInput, setRequireTypesInput] = useState("Product");
   const [minOutcome, setMinOutcome] = useState<MinOutcome>("rich_results_eligible");
   const [urlsInput, setUrlsInput] = useState("");
@@ -247,20 +295,26 @@ export default function AgentRunner({
   const [detail, setDetail] = useState<DetailState>({ status: "idle" });
 
   const runIdRef = useRef<string | null>(null);
+  // True once a terminal stream event (done/error) arrived — distinguishes a clean
+  // finish from a severed connection that needs the poll fallback.
+  const terminalRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const requireTypesRef = useRef<HTMLInputElement | null>(null);
 
-  // Cancel the in-flight stream if the operator navigates away mid-run, so the fetch
-  // (and, via the route's cancel hook, the server-side run) doesn't dangle.
+  // Cancel the in-flight stream fetch if the operator navigates away mid-run. The
+  // server-side run deliberately continues (disconnect ≠ kill); its result persists
+  // and is visible in the report / run history.
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const handleEvent = useCallback((data: Record<string, unknown>) => {
     if (data.step === "done") {
+      terminalRef.current = true;
       setSummary(data as unknown as DoneSummary);
       setPhase("done");
       return;
     }
     if (data.step === "error") {
+      terminalRef.current = true;
       setError(String(data.error ?? "Run failed"));
       setPhase("done");
       return;
@@ -271,6 +325,14 @@ export default function AgentRunner({
       runIdRef.current = ev.runId;
     }
     if (ev.phase) setPhase(ev.phase);
+    // Staging events (issue #26): keep the latest message; the previewUrl is sticky once
+    // it arrives so the "see your staged store" link survives later events.
+    if (ev.phase === "stage" || ev.phase === "publish") {
+      setStageInfo((prev) => ({
+        message: ev.message ?? prev.message,
+        previewUrl: ev.previewUrl ?? prev.previewUrl,
+      }));
+    }
     setCounts((prev) => ({
       perceived: ev.perceived ?? prev.perceived,
       queued: ev.queued ?? prev.queued,
@@ -285,9 +347,73 @@ export default function AgentRunner({
     }
     if (ev.phase === "act" && ev.url) {
       const url = ev.url;
-      setRows((prev) => ({ ...prev, [url]: { url, gates: ev.gates ?? null, outcome: ev.outcome } }));
+      setRows((prev) => ({
+        ...prev,
+        [url]: { url, gates: ev.gates ?? null, outcome: ev.outcome, schemaAfter: ev.schemaAfter },
+      }));
     }
   }, []);
+
+  /**
+   * Poll fallback: the SSE connection died but the run is still going server-side
+   * (the HTTP stack severs long streams — Node's requestTimeout is ~300s — and a
+   * staging duplicate alone can take longer). The run row is the durable truth:
+   * poll it until terminal and synthesize a degraded done-state that points the
+   * operator at the full report instead of a dead "network error".
+   */
+  const pollUntilDone = useCallback(
+    async (id: string, runDryRun: boolean, ac: AbortController) => {
+      setStageInfo((prev) => ({
+        ...prev,
+        message:
+          "live connection dropped — the run is still going on the server; checking for the result…",
+      }));
+      const MAX_POLLS = 240; // 5s apart ≈ 20 minutes, far beyond any observed run
+      for (let i = 0; i < MAX_POLLS && !ac.signal.aborted; i++) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        let run: { status?: string; error?: string | null; pages_touched?: number | null } | null = null;
+        try {
+          const res = await fetch(`/api/agent/run/${id}`);
+          if (!res.ok) continue;
+          run = (await res.json()).run ?? null;
+        } catch {
+          continue; // transient — the run row will still be there next poll
+        }
+        if (!run?.status || run.status === "running") continue;
+        terminalRef.current = true;
+        if (run.status === "done") {
+          setSummary({
+            status: "done",
+            killed: false,
+            dryRun: runDryRun,
+            pagesTouched: run.pages_touched ?? 0,
+            satisfied: [],
+            unsatisfied: [],
+            skipped: [],
+            haltedBy: null,
+            stagedSnippet: null,
+            apply: null,
+            staging: null,
+          });
+          setStageInfo((prev) => ({
+            ...prev,
+            message:
+              "the run finished while disconnected — page-level results are in the full report below",
+          }));
+        } else {
+          setError(run.error ?? "Run failed");
+        }
+        setPhase("done");
+        return;
+      }
+      if (!ac.signal.aborted) {
+        setError(
+          "lost the live connection and the run hasn't finished — it may still be running; check the report page or run history"
+        );
+      }
+    },
+    []
+  );
 
   const startRun = useCallback(
     async (runDryRun: boolean) => {
@@ -301,7 +427,9 @@ export default function AgentRunner({
       setDetail({ status: "idle" });
       setRunId(null);
       runIdRef.current = null;
+      terminalRef.current = false;
       setPhase(null);
+      setStageInfo({});
       setCounts({ perceived: 0, queued: 0, acted: 0, satisfied: 0, unsatisfied: 0 });
 
       const requireTypes = requireTypesInput.split(",").map((s) => s.trim()).filter(Boolean);
@@ -316,7 +444,7 @@ export default function AgentRunner({
         const res = await fetch("/api/agent/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ siteId, dryRun: runDryRun, target }),
+          body: JSON.stringify({ siteId, dryRun: runDryRun, target, writeTheme: writeMode }),
           signal: ac.signal,
         });
         if (!res.ok) {
@@ -346,14 +474,25 @@ export default function AgentRunner({
             }
           }
         }
+        // Stream ended without a terminal event: the connection was severed
+        // mid-run (not a failure of the run itself) — fall back to polling.
+        if (!terminalRef.current && runIdRef.current && !ac.signal.aborted) {
+          await pollUntilDone(runIdRef.current, runDryRun, ac);
+        }
       } catch (e) {
-        if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+        if (!ac.signal.aborted) {
+          if (!terminalRef.current && runIdRef.current) {
+            await pollUntilDone(runIdRef.current, runDryRun, ac);
+          } else {
+            setError(e instanceof Error ? e.message : String(e));
+          }
+        }
       } finally {
         if (abortRef.current === ac) abortRef.current = null;
         setRunning(false);
       }
     },
-    [siteId, scope, requireTypesInput, minOutcome, urlsInput, handleEvent]
+    [siteId, scope, requireTypesInput, minOutcome, urlsInput, writeMode, handleEvent, pollUntilDone]
   );
 
   const kill = useCallback(async () => {
@@ -367,7 +506,7 @@ export default function AgentRunner({
         body: JSON.stringify({ control: "kill" }),
       });
     } catch {
-      // best-effort; the run loop will also stop on disconnect
+      // best-effort; the control flag is the only kill channel (disconnect ≠ kill)
     } finally {
       setKilling(false);
     }
@@ -538,6 +677,28 @@ export default function AgentRunner({
                 </select>
               </label>
               <label className="block sm:col-span-2">
+                <span className="text-xs font-medium text-text-secondary">Write target (live runs)</span>
+                <select
+                  value={writeMode}
+                  onChange={(e) => setWriteMode(e.target.value)}
+                  disabled={running}
+                  className="mt-1 w-full rounded-md border border-border bg-surface-1 px-3 py-2 text-sm text-text-primary disabled:opacity-50"
+                >
+                  {WRITE_MODES.map((m) => (
+                    <option key={m.value} value={m.value} disabled={m.needsShop && !hasShopCredentials}>
+                      {m.label}
+                      {m.needsShop && !hasShopCredentials ? " — connect your Shopify store first" : ""}
+                    </option>
+                  ))}
+                </select>
+                {!hasShopCredentials && (
+                  <span className="mt-1 block text-[11px] text-text-muted">
+                    Staging modes duplicate your live theme and need the store connected
+                    (provision with your Shopify app credentials).
+                  </span>
+                )}
+              </label>
+              <label className="block sm:col-span-2">
                 <span className="text-xs font-medium text-text-secondary">Required schema types (comma-separated)</span>
                 <input
                   ref={requireTypesRef}
@@ -570,6 +731,52 @@ export default function AgentRunner({
           </div>
         )}
 
+        {/* Last run (rehydrate-on-mount): a remount wipes the in-memory result card,
+            but the run itself is durable — point back at it instead of a blank page. */}
+        {!running && !summary && !error && lastRun && (
+          <div className="mt-4 rounded-lg border border-border bg-surface-card p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-text-primary">Last run</h2>
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                  lastRun.status === "done"
+                    ? "bg-valid-dim/40 text-valid"
+                    : lastRun.status === "running"
+                      ? "bg-fix/20 text-fix-bright"
+                      : "bg-error-dim/20 text-error"
+                }`}
+              >
+                {lastRun.status}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-text-secondary">
+              {lastRun.ended_at
+                ? `Finished ${new Date(lastRun.ended_at).toLocaleString()}`
+                : lastRun.started_at
+                  ? `Started ${new Date(lastRun.started_at).toLocaleString()}`
+                  : ""}
+              {lastRun.last_step?.step && (
+                <>
+                  {" · last checkpoint: "}
+                  <span className="font-mono">
+                    {lastRun.last_step.step}
+                    {lastRun.last_step.status ? ` ${lastRun.last_step.status}` : ""}
+                  </span>
+                </>
+              )}
+              {lastRun.error && <span className="text-error"> · {lastRun.error}</span>}
+            </p>
+            <div className="mt-3">
+              <Link
+                href={`/site/${crawlId}/agent/report/${lastRun.id}`}
+                className="inline-block rounded-md bg-fix px-4 py-2 text-xs font-bold text-text-primary transition-all hover:bg-fix-bright"
+              >
+                View the full report →
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Live progress (while running, before the done summary lands) */}
         {running && !summary && (
           <div className="mt-4 rounded-lg border border-border bg-surface-card p-5 shadow-sm">
@@ -583,6 +790,24 @@ export default function AgentRunner({
                 </span>
               )}
             </div>
+            {(phase === "stage" || phase === "publish" || stageInfo.message) && (
+              <div className="mt-3 rounded-md border border-fix/30 bg-fix/10 px-3 py-2 text-xs text-text-secondary">
+                <span className="font-medium text-fix-bright">
+                  {phase === "publish" ? "Publishing" : "Staging"}:
+                </span>{" "}
+                {stageInfo.message ?? "working…"}
+                {stageInfo.previewUrl && (
+                  <a
+                    href={stageInfo.previewUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="ml-2 font-medium text-fix-bright underline hover:no-underline"
+                  >
+                    Preview your staged store ↗
+                  </a>
+                )}
+              </div>
+            )}
             <div className="mt-3 grid grid-cols-3 gap-3 text-center text-xs sm:grid-cols-5">
               {([
                 ["Found", counts.perceived],
@@ -616,6 +841,54 @@ export default function AgentRunner({
           <div className={`mt-4 rounded-lg border p-6 shadow-sm ${TONE_CLASSES[verdict.tone]}`}>
             <h2 className="text-lg font-semibold text-text-primary">{verdict.title}</h2>
             <p className="mt-1 text-sm text-text-secondary">{verdict.detail}</p>
+
+            {/* The merchant-readable report — the "you're good to go" artifact. */}
+            {runId && (
+              <div className="mt-4">
+                <Link
+                  href={`/site/${crawlId}/agent/report/${runId}`}
+                  className="inline-block rounded-md bg-fix px-5 py-2.5 text-sm font-bold text-text-primary transition-all hover:bg-fix-bright"
+                >
+                  View the full report →
+                </Link>
+              </div>
+            )}
+
+            {/* Staging outcome (issue #26) — preview link, publish state, rollback note. */}
+            {summary.staging && (
+              <div className="mt-4 rounded-md border border-fix/30 bg-fix/10 p-4 text-xs text-text-secondary">
+                {summary.staging.published ? (
+                  <>
+                    <span className="font-semibold text-text-primary">
+                      Your verified theme is live.
+                    </span>{" "}
+                    The previous theme (#{summary.staging.rollbackThemeId}) is kept in
+                    Online Store → Themes — republishing it undoes everything instantly.
+                  </>
+                ) : summary.staging.deleted ? (
+                  <>
+                    The staging theme was removed after the run rolled back — your live
+                    store was never touched.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-text-primary">
+                      Your changes are on a staged copy of the live theme.
+                    </span>{" "}
+                    <a
+                      href={summary.staging.previewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-fix-bright underline hover:no-underline"
+                    >
+                      Preview the staged store ↗
+                    </a>{" "}
+                    — publish theme #{summary.staging.stagingThemeId} in Online Store →
+                    Themes when you&apos;re happy.
+                  </>
+                )}
+              </div>
+            )}
 
             {/* The headline next step: apply a clean preview to the live store. */}
             {canApply && (
@@ -715,6 +988,7 @@ export default function AgentRunner({
                   expanded={expanded}
                   detail={detail}
                   onToggle={toggleRow}
+                  siteId={siteId}
                 />
                 <GroupSection
                   title="Not reached"
@@ -737,6 +1011,7 @@ export default function AgentRunner({
                   expanded={expanded}
                   detail={detail}
                   onToggle={toggleRow}
+                  siteId={siteId}
                 />
                 <GroupSection
                   title="Already good"
@@ -781,6 +1056,7 @@ function GroupSection({
   expanded,
   detail,
   onToggle,
+  siteId,
 }: {
   title: string;
   emoji: string;
@@ -792,6 +1068,8 @@ function GroupSection({
   expanded: Set<string>;
   detail: DetailState;
   onToggle: (url: string) => void;
+  /** Enables the per-page "Refine with AI" tweak panel when provided. */
+  siteId?: string;
 }) {
   if (urls.length === 0) return null;
   return (
@@ -812,6 +1090,7 @@ function GroupSection({
             isExpanded={expanded.has(url)}
             detail={detail}
             onToggle={onToggle}
+            siteId={siteId}
           />
         ))}
       </div>
@@ -826,6 +1105,7 @@ function PageRowItem({
   isExpanded,
   detail,
   onToggle,
+  siteId,
 }: {
   url: string;
   row: PageRow | undefined;
@@ -833,6 +1113,7 @@ function PageRowItem({
   isExpanded: boolean;
   detail: DetailState;
   onToggle: (url: string) => void;
+  siteId?: string;
 }) {
   const reason = rowReason(row);
 
@@ -862,42 +1143,109 @@ function PageRowItem({
 
       {expandable && isExpanded && (
         <div className="mt-2">
-          <PageDetailView url={url} detail={detail} />
+          <PageDetailView url={url} detail={detail} injected={row?.schemaAfter} siteId={siteId} />
         </div>
       )}
     </div>
   );
 }
 
-function PageDetailView({ url, detail }: { url: string; detail: DetailState }) {
-  if (detail.status === "loading") {
-    return <p className="text-xs text-text-muted">Loading details…</p>;
-  }
-  if (detail.status === "error") {
-    return <p className="text-xs text-text-muted">Details unavailable.</p>;
-  }
-  if (detail.status !== "ready") return null;
-  const d = detail.byUrl[url];
-  if (!d) {
-    return <p className="text-xs text-text-muted">Details unavailable for this page.</p>;
-  }
+/** Primary @type of a staged JSON-LD value (first object's type) — for the tweak panel. */
+function primarySchemaType(value: unknown): string | null {
+  const first = Array.isArray(value) ? value[0] : value;
+  if (first === null || typeof first !== "object") return null;
+  const t = (first as Record<string, unknown>)["@type"];
+  if (typeof t === "string") return t;
+  if (Array.isArray(t) && typeof t[0] === "string") return t[0];
+  return null;
+}
+
+function PageDetailView({
+  url,
+  detail,
+  injected,
+  siteId,
+}: {
+  url: string;
+  detail: DetailState;
+  injected: unknown;
+  siteId?: string;
+}) {
+  // The injected schema comes straight off the live stream, so it renders instantly with
+  // no spinner or DB round-trip — this is the "what will be added to this product" view.
+  const dbDetail = detail.status === "ready" ? detail.byUrl[url] : undefined;
+  const before = dbDetail?.before;
+  // Fall back to the DB "after" only if the stream didn't carry one (older runs).
+  const injectedValue =
+    injected != null && !(Array.isArray(injected) && injected.length === 0)
+      ? injected
+      : dbDetail?.after;
+
+  // A saved merchant correction (issue #29) comes back from the chat endpoint as
+  // the post-edit document. Fold it in: otherwise the preview above and the next
+  // chat request both keep using the stale pre-correction JSON-LD. The tweak is
+  // pinned to the document it edited — a re-run that streams a fresh schemaAfter
+  // (new object reference) discards the stale correction instead of masking it.
+  const [tweaked, setTweaked] = useState<{ base: unknown; value: unknown } | null>(null);
+  const shownValue =
+    tweaked && tweaked.base === injectedValue ? tweaked.value : injectedValue;
+
+  const tweakType = primarySchemaType(shownValue);
+
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      <SchemaBlock label="Before" value={d.before} />
-      <SchemaBlock label="After" value={d.after} />
+    <div className="space-y-2">
+      <SchemaBlock label="Structured data to be injected" value={shownValue} highlight />
+      {before != null && (Array.isArray(before) ? before.length > 0 : true) && (
+        <SchemaBlock label="Before (current page)" value={before} />
+      )}
+      {detail.status === "loading" && before == null && (
+        <p className="text-xs text-text-muted">Loading the page&apos;s current schema…</p>
+      )}
+      {/* Optional merchant correction (issue #29) — sticky overrides via chat. Collapsed
+          by default: the default flow needs no merchant input. */}
+      {siteId && tweakType && shownValue != null && (
+        <details className="rounded-md border border-fix/30">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-fix-bright">
+            Refine with AI — correct anything that&apos;s wrong (optional)
+          </summary>
+          <div className="border-t border-fix/20 p-3">
+            <SchemaTweakPanel
+              siteId={siteId}
+              url={url}
+              schemaType={tweakType}
+              jsonld={shownValue}
+              onUpdated={(v) => setTweaked({ base: injectedValue, value: v })}
+            />
+          </div>
+        </details>
+      )}
     </div>
   );
 }
 
-function SchemaBlock({ label, value }: { label: string; value: unknown }) {
+function SchemaBlock({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: unknown;
+  highlight?: boolean;
+}) {
   const text =
     value == null || (Array.isArray(value) && value.length === 0)
       ? "—"
       : JSON.stringify(value, null, 2);
   return (
     <div>
-      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-text-muted">{label}</div>
-      <pre className="max-h-64 overflow-auto rounded-md bg-surface-0 p-2 text-[11px] leading-relaxed text-text-secondary">
+      <div
+        className={`mb-1 text-[11px] font-medium uppercase tracking-wide ${highlight ? "text-accent-bright" : "text-text-muted"}`}
+      >
+        {label}
+      </div>
+      <pre
+        className={`max-h-72 overflow-auto rounded-md p-2 text-[11px] leading-relaxed text-text-secondary ${highlight ? "bg-surface-0 ring-1 ring-accent/20" : "bg-surface-0"}`}
+      >
         {text}
       </pre>
     </div>

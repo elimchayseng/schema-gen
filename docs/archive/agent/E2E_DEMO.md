@@ -71,10 +71,13 @@ Each checkpoint has two halves, because both must hold:
 | An **unpublished** theme to write to | duplicate the live theme; put its id in `SHOPIFY_TEST_THEME_ID` |
 | App installed on the dev store (for token mint) | install the `dev.shopify.com` app |
 | `.env.local` populated | `SHOPIFY_SHOP`, `SHOPIFY_API_VERSION`, `SHOPIFY_APP_KEY`, `SHOPIFY_APP_SECRET`, `SHOPIFY_OFFLINE_TOKEN` (stopgap), `SHOPIFY_TEST_THEME_ID`, Supabase + inference keys |
+| **Storefront password handled** (dev stores gate the storefront) | EITHER set `SHOPIFY_STOREFRONT_PASSWORD` to the store's storefront password (Online Store → Preferences) so L4 can read the rendered page, OR turn the storefront password **off** for the duration of the demo |
 | Supabase migrations applied | `agent_runs`, `agent_actions`, `theme_backups`, `sites`, `page_schemas` |
 | A `sites` row for the dev store | so `goal.siteId` resolves to the store domain |
 
-**Golden rule (enforced in code):** the agent only ever writes to `SHOPIFY_TEST_THEME_ID` or a duplicate. `resolveWriteThemeId()` throws if that env var is missing or invalid, so a live run **cannot** silently target the published theme. Never point the demo at a published/live theme.
+> ⚠️ **The dev-store password wall (the #1 "it failed right after writing" cause).** A Shopify development store — and any store with "Password protect this store" enabled — 302-redirects *every* unauthenticated storefront request (including `?preview_theme_id=`) to `/password`. The write succeeds, but L4 live-verify only ever sees the password page (no JSON-LD), fails, and **auto-rolls-back** — so the change appears to "not take." Fix: set `SHOPIFY_STOREFRONT_PASSWORD` (the agent submits it to obtain the `storefront_digest` cookie and verifies through the wall) or disable the storefront password. The agent now reports this explicitly instead of a silent rollback.
+
+**Golden rule:** the agent only ever writes to `SHOPIFY_TEST_THEME_ID` or a duplicate. `resolveWriteThemeId()` throws if that env var is missing or invalid. ⚠️ It does **not** yet check the theme's *role* — point `SHOPIFY_TEST_THEME_ID` at an **unpublished** theme (a duplicate), never the `main`/published one. Writing to `main` puts schema straight onto the live storefront.
 
 **Gate before any demo step:**
 
