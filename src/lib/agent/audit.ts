@@ -109,7 +109,7 @@ export async function recordStep(
 ): Promise<void> {
   try {
     const supabase = createAdminClient();
-    await supabase
+    const { error } = await supabase
       .from("agent_runs")
       .update({
         last_step: {
@@ -123,6 +123,12 @@ export async function recordStep(
         },
       })
       .eq("id", runId);
+    // supabase-js reports failures in the result, not by throwing. Stay quiet for
+    // the expected pre-migration-013 missing column (PGRST204); surface anything else
+    // so a broken last_step persist is visible instead of silently stale.
+    if (error && error.code !== "PGRST204") {
+      console.warn(`[agent/audit] last_step persist failed: ${error.message}`);
+    }
   } catch {
     /* best-effort by design */
   }

@@ -1,4 +1,4 @@
-import { validateSchema } from "./engine";
+import { validateSchema, isPastDateOnly } from "./engine";
 import { resolveProperties, resolveInvalidProperties } from "./engine";
 import { schemaDefinitions } from "./schema-definitions";
 import type { FixApplied, FixResult, PropertyDefinition, ValidationResult } from "./types";
@@ -245,7 +245,7 @@ function fixValue(
     propDef.name === "priceValidUntil" &&
     typeof value === "string" &&
     !isNaN(Date.parse(value)) &&
-    value.slice(0, 10) < new Date().toISOString().slice(0, 10)
+    isPastDateOnly(value)
   ) {
     const bumped = new Date();
     bumped.setUTCFullYear(bumped.getUTCFullYear() + 1);

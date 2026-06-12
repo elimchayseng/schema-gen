@@ -68,10 +68,9 @@ export interface ApplySuppression {
 /**
  * Per-item context handed to the injected L4 verify. `unique:true` (set whenever the
  * apply carries suppressions) asks the verifier to run the duplicate-prevention gate
- * (issue #24) — l4Verify's L4VerifyInput.unique. The param is OPTIONAL and additive:
- * today's run.ts makeLiveVerify `(url, _entry) => …` ignores it and behaves exactly as
- * before. NEXT AGENT (run.ts): forward `ctx?.unique` into l4Verify({ …, unique }) so
- * authoritative applies actually enforce exactly-one-block-per-type live.
+ * (issue #24) — l4Verify's L4VerifyInput.unique. run.ts makeLiveVerify forwards
+ * `ctx?.unique` into l4Verify so authoritative applies enforce exactly-one-block-per-type
+ * on the live render.
  */
 export interface VerifyContext {
   unique: boolean;

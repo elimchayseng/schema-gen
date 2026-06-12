@@ -76,6 +76,8 @@ const themesMock = vi.hoisted(() => ({
   themesList: vi.fn(
     async (): Promise<{ id: number; name: string; role: string }[]> => []
   ),
+  // No-op: the guard's role/existence checks are unit-tested in themes.test.ts.
+  assertSafeWriteTheme: vi.fn(),
 }));
 vi.mock("@/lib/shopify/themes", () => ({
   ...themesMock,
@@ -88,6 +90,15 @@ vi.mock("@/lib/shopify/credentials", () => ({
     storefrontPassword: null,
   })),
 }));
+
+// L4 verify — mocked so the makeLiveVerify closure's forwarding into l4Verify is
+// observable (issue #24 gate). verifyRenderedHtml is included only so post-publish.ts
+// (a transitive import of run.ts) still loads; it is never invoked here.
+const verifyMock = vi.hoisted(() => ({
+  l4Verify: vi.fn(),
+  verifyRenderedHtml: vi.fn(),
+}));
+vi.mock("../verify", () => verifyMock);
 
 // THE SOURCE LOCATOR — mocked: each test scripts the classification verdicts.
 const locatorMock = vi.hoisted(() => {
@@ -398,6 +409,45 @@ describe("runGoal authoritative mode (issue #23)", () => {
     expect(locatorMock.makeSourceLocatorOps).not.toHaveBeenCalled();
     expect(applyMock.fn).toHaveBeenCalledTimes(1); // the apply itself still ran
     expect(applyMock.fn.mock.calls[0][0].suppressions).toBeUndefined();
+  });
+
+  it("makeLiveVerify forwards ctx.unique into l4Verify (issue #24 duplicate gate)", async () => {
+    // Today every other test mocks applyEntries with a canned result, so the real
+    // makeLiveVerify closure never runs — reverting the `unique: ctx?.unique`
+    // forwarding in run.ts would leave the suite green while silently disabling
+    // the duplicate-prevention gate. Here the applyEntries mock invokes the verify
+    // callback it received, exactly as the real apply envelope does.
+    verifyMock.l4Verify.mockResolvedValue({ passed: true });
+    applyMock.fn.mockImplementation(
+      async (params: {
+        verify: (
+          url: string,
+          entry: { jsonld: unknown },
+          ctx?: { unique: boolean }
+        ) => Promise<unknown>;
+      }) => {
+        const entry = { template: "product", handle: "tee", jsonld: product };
+        await params.verify(PRODUCT, entry, { unique: true }); // suppressions present
+        await params.verify(PRODUCT, entry); // ctx omitted (legacy path)
+        return { status: "applied", writeTarget: "999", l4: [], actions: [] };
+      }
+    );
+
+    const result = await runGoal(siteGoal(), live);
+
+    expect(result.status).toBe("done");
+    expect(verifyMock.l4Verify).toHaveBeenCalledTimes(2);
+    // ctx {unique:true} must reach l4Verify — this IS the issue #24 gate wire.
+    expect(verifyMock.l4Verify).toHaveBeenCalledWith(
+      expect.objectContaining({ unique: true })
+    );
+    expect(verifyMock.l4Verify.mock.calls[0][0]).toMatchObject({ unique: true });
+    // And it verifies the staged render, not the published theme.
+    expect(verifyMock.l4Verify.mock.calls[0][0].url).toContain(
+      "preview_theme_id=999"
+    );
+    // No ctx → unique must be falsy (defaults to false, never true).
+    expect(verifyMock.l4Verify.mock.calls[1][0].unique).toBe(false);
   });
 
   it("dry-run early warning: external schema surfaces as a merchant action with no write", async () => {

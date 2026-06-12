@@ -18,6 +18,7 @@ import type { PageResult } from "@/lib/crawl/types";
 import { resolveShopContext } from "@/lib/shopify/credentials";
 import {
   MANAGED_STAGING_PREFIX,
+  assertSafeWriteTheme,
   prepareStagingTheme,
   themeDelete,
   themePublish,
@@ -629,6 +630,13 @@ export async function runGoal(
   // recordStep swallows its own failures; the fire-and-forget here can never
   // slow or abort the loop. NEVER name a step "done"/"error" (SSE terminal frames).
   const stepEvent = (ev: AgentProgressEvent) => {
+    // Hard guard for the reserved terminal discriminator: AgentRunner treats
+    // step "done"/"error" as end-of-stream frames, so a progress step by that
+    // name would prematurely terminate the client UI mid-run. All real steps are
+    // dot-namespaced; this keeps a future careless name from breaking the contract.
+    if (ev.step === "done" || ev.step === "error") {
+      throw new Error(`reserved step name "${ev.step}" — name it "<phase>.${ev.step}"`);
+    }
     emit(ev);
     if (runId) void recordStep(runId, ev);
   };
@@ -743,7 +751,7 @@ export async function runGoal(
     // Storefront-password auth for perceive + execute. A Shopify dev store (or any store
     // with "Password protect this store" on) 302-redirects every storefront request to
     // /password, so processPage would only ever see the password wall. Obtain the
-    // storefront_digest cookie once (same one L4 verify uses; getStorefrontCookie caches
+    // storefront auth cookie once (same one L4 verify uses; getStorefrontCookie caches
     // per-shop in-process) and attach it ONLY to fetches on the configured shop host —
     // public sites in the goal are still fetched anonymously. Best-effort: no password
     // configured, or any failure, degrades to anonymous fetches (the prior behavior).
@@ -960,6 +968,16 @@ export async function runGoal(
         ? staging.stagingThemeId
         : resolveWriteThemeId();
       const shop = shopCtx?.shop ?? getShopifyConfig().shop;
+
+      // Enforce the never-touch-published invariant at runtime, not just in the
+      // smoke script: the env-configured id must exist on this shop and must not
+      // be the role:"main" theme. Staging targets are duplicates prepareStagingTheme
+      // itself created, so only the env path needs the check.
+      if (!staging) {
+        await step("apply", "apply.theme_guard", async () => {
+          assertSafeWriteTheme(themeId, await themesList(shopCtx ?? undefined));
+        });
+      }
 
       // AUTHORITATIVE SUPPRESSION PLAN (issue #23) — computed against the WRITE-TARGET
       // theme: the staging duplicate's assets are byte-identical to live (that's the

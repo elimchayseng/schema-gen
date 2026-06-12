@@ -16,7 +16,11 @@ import {
   type ThemeAssetOps,
 } from "../apply";
 import { LAYOUT_ASSET_KEY, SNIPPET_ASSET_KEY } from "@/lib/shopify/install";
-import { SUPPRESS_PREFIX, unsuppressAll } from "@/lib/shopify/suppress";
+import {
+  SUPPRESS_PREFIX,
+  suppressJsonLdEmission,
+  unsuppressAll,
+} from "@/lib/shopify/suppress";
 import type { GateResult } from "../types";
 
 const THEME_ID = 123456;
@@ -187,6 +191,53 @@ describe("applyEntries with suppressions (issue #23)", () => {
     );
     // The safe suppression still happened.
     expect(r.suppressedAssets).toEqual([SECTION_KEY]);
+  });
+
+  it("already-suppressed target → 'already_suppressed' suppress row, NO write, not in suppressedAssets", async () => {
+    // Idempotent re-run on a reused staging theme: the target's emission is
+    // already wrapped, so suppressJsonLdEmission returns changed:false. The fix
+    // this pins: the row MUST still be recorded (the report derives "authoritative
+    // ran" from suppress rows — the old silent skip made a published run claim the
+    // theme still emits competing schema), while the asset is never re-written.
+    const pre = suppressJsonLdEmission(SECTION_WITH_JSONLD, { match: { index: 0 } });
+    if (!pre.ok) throw new Error("fixture: pre-suppression failed");
+    const alreadySuppressed = pre.text;
+    const { ops, store } = makeMemoryTheme({
+      ...seedLive,
+      [`${THEME_ID}:${SECTION_KEY}`]: alreadySuppressed,
+    });
+    const puts: string[] = [];
+    const realPut = ops.put;
+    ops.put = (async (t: number, k: string, v: string) => {
+      puts.push(k);
+      return realPut(t, k, v);
+    }) as ThemeAssetOps["put"];
+
+    const r = await applyEntries({
+      runId: "run-1",
+      themeId: THEME_ID,
+      shop: "s",
+      items: [item("https://s/products/a")],
+      ops,
+      verify: passVerify,
+      suppressions: [suppression()],
+    });
+
+    expect(r.status).toBe("applied");
+    // Audited as a suppress action with the already_suppressed outcome.
+    const row = r.actions.find((a) => a.action === "suppress");
+    expect(row?.outcome.startsWith("already_suppressed:")).toBe(true);
+    expect(row).toMatchObject({
+      url: "https://s/products/a",
+      outcome: `already_suppressed:${SECTION_KEY}`,
+      writeTarget: String(THEME_ID),
+    });
+    // No put() for the section — only the footprint (snippet/layout) was written.
+    expect(puts).not.toContain(SECTION_KEY);
+    expect(store.get(`${THEME_ID}:${SECTION_KEY}`)).toBe(alreadySuppressed);
+    // Not newly suppressed this run, so not in suppressedAssets.
+    expect(r.suppressedAssets).toEqual([]);
+    expect(r.actions.some((a) => a.action === "merchant_action")).toBe(false);
   });
 
   it("missing suppression target asset → merchant_action row, apply continues", async () => {

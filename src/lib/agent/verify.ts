@@ -191,7 +191,14 @@ export function verifyRenderedHtml(
   );
 }
 
-const defaultSleep = () => Promise.resolve();
+/**
+ * Production default: linear backoff (2s, 4s, 6s) between propagation polls —
+ * a Shopify storefront render can lag the Asset API write by seconds, and an
+ * instant retry burns all attempts in ~0ms and rolls back a good apply. Tests
+ * inject their own sleep (or maxAttempts: 1) so suites stay instant.
+ */
+const defaultSleep = (attempt: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, 2_000 * (attempt + 1)));
 
 export async function l4Verify(input: L4VerifyInput): Promise<GateResult> {
   const { fetchHtml, url } = input;

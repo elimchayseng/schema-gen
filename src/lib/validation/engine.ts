@@ -485,7 +485,7 @@ function validateDate(
 }
 
 /** True when an ISO date(-time) string falls strictly before today (UTC, date-only). */
-function isPastDateOnly(value: string): boolean {
+export function isPastDateOnly(value: string): boolean {
   const today = new Date().toISOString().slice(0, 10);
   return value.slice(0, 10) < today;
 }

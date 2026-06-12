@@ -51,6 +51,16 @@ vi.mock("../apply", () => ({
 vi.mock("@/lib/shopify/config", () => ({
   getShopifyConfig: () => ({ shop: "shop.myshopify.com", apiVersion: "2025-01", baseUrl: "x" }),
 }));
+// Theme write guard (env mode) — mocked so the guard never fetches a real theme
+// list; its role/existence checks are unit-tested in themes.test.ts.
+vi.mock("@/lib/shopify/themes", () => ({
+  MANAGED_STAGING_PREFIX: "SchemaGen Staging",
+  assertSafeWriteTheme: vi.fn(),
+  themesList: vi.fn(async () => []),
+  prepareStagingTheme: vi.fn(),
+  themePublish: vi.fn(),
+  themeDelete: vi.fn(),
+}));
 
 import { processPage } from "@/lib/crawl/process-page";
 import { runGoal } from "../run";

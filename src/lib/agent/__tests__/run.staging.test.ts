@@ -65,12 +65,14 @@ vi.mock("@/lib/shopify/storefront-password", () => ({
   looksPasswordGated: vi.fn(() => false),
 }));
 
-// Themes API (issue #26 surface) — fully mocked.
+// Themes API (issue #26 surface) — fully mocked. assertSafeWriteTheme is a no-op
+// here: the guard's role/existence checks are unit-tested in themes.test.ts.
 const themesMock = vi.hoisted(() => ({
   prepareStagingTheme: vi.fn(),
   themePublish: vi.fn(),
   themeDelete: vi.fn(),
   themesList: vi.fn(),
+  assertSafeWriteTheme: vi.fn(),
 }));
 vi.mock("@/lib/shopify/themes", () => ({
   ...themesMock,

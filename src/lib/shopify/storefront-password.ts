@@ -25,7 +25,7 @@ import { shopifyLog } from "./logger";
 
 const TIMEOUT_MS = 15_000;
 
-/** shop -> `storefront_digest=…` cookie. In-process; a run completes well within one TTL. */
+/** shop -> cookie jar (`_shopify_essential` / `storefront_digest`). In-process; a run completes well within one TTL. */
 const cookieCache = new Map<string, string>();
 
 export function isStorefrontPasswordConfigured(): boolean {

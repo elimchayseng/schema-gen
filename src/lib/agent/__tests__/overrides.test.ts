@@ -222,6 +222,21 @@ describe("applyOverrides", () => {
     expect((result as Record<string, unknown>).sku).toBe("TS-100");
   });
 
+  it("refuses prototype-chain segments — '__proto__.polluted' conflicts and pollutes nothing", () => {
+    // Regression pin: fieldPath is LLM-proposed from merchant chat. Without the
+    // FORBIDDEN_SEGMENTS guard in setAtPath, "__proto__.polluted" would land the
+    // value on Object.prototype process-wide.
+    const { result, applied, conflicts } = applyOverrides(product(), [
+      ov("__proto__.polluted", "owned"),
+    ]);
+    expect(applied).toHaveLength(0);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].reason).toContain("forbidden path segment");
+    // Object.prototype stayed clean.
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect((result as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
   it("supports object and array replacement values", () => {
     const { result, applied } = applyOverrides(product(), [
       ov("offers", [{ "@type": "Offer", price: "5.00", priceCurrency: "USD" }]),

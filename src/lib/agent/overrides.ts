@@ -67,6 +67,14 @@ function candidateNodes(doc: unknown): unknown[] {
 const NUMERIC_SEGMENT = /^\d+$/;
 
 /**
+ * Segments that would traverse or assign into the prototype chain instead of
+ * plain data. fieldPath is LLM-proposed from merchant chat, so "__proto__.x"
+ * would otherwise pollute Object.prototype process-wide (current["__proto__"]
+ * is a plain object to isPlainObject, and the final assignment lands on it).
+ */
+const FORBIDDEN_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
  * Set `value` at `segments` within `node`. Returns null on success or a
  * human-readable conflict reason. Mutates `node` (callers pass a clone).
  *
@@ -85,6 +93,12 @@ function setAtPath(
   segments: string[],
   value: unknown
 ): string | null {
+  for (const seg of segments) {
+    if (FORBIDDEN_SEGMENTS.has(seg)) {
+      return `forbidden path segment "${seg}"`;
+    }
+  }
+
   let current: unknown = node;
 
   for (let i = 0; i < segments.length - 1; i++) {
@@ -335,7 +349,12 @@ export interface ProposedEdit {
 }
 
 const proposedEditSchema = z.object({
-  fieldPath: z.string().min(1),
+  fieldPath: z
+    .string()
+    .min(1)
+    .refine((p) => p.split(".").every((s) => !FORBIDDEN_SEGMENTS.has(s)), {
+      message: "fieldPath must not traverse the prototype chain",
+    }),
   value: z.unknown(),
   reason: z.string(),
 });
