@@ -1,5 +1,44 @@
 # TODOs
 
+## Security & Concurrency (from 2026-06-12 adversarial review)
+
+- **Tenant-bind shopify_credentials — block cross-tenant clobbering** (P0, Medium effort)
+  - `shopify_credentials` is keyed by `shop_domain` alone (migration 008) and
+    `upsertShopCredentials` upserts `onConflict: "shop_domain"` with no ownership
+    check (`src/lib/shopify/credentials.ts`, provision route). Any authenticated
+    user can overwrite another tenant's app_key/app_secret/storefront_password by
+    provisioning the same domain — breaks or hijacks their pipeline.
+  - Fix: migration 014 adds a user/tenant column + unique(shop_domain, user) or an
+    ownership check in the provision route before upsert; verify creds against
+    Shopify before accepting. Also revisit the skipped migration-008 finding
+    (plaintext secrets) in the same pass.
+  - MUST land before signup opens beyond invited users. Accepted at /ship gate
+    2026-06-12 because signup is currently closed.
+
+- **Concurrency guard: atomic claim + heartbeat liveness** (P0, Medium effort)
+  - The 409 guard in `src/app/api/agent/run/route.ts` is check-then-act: two
+    simultaneous live POSTs both pass the SELECT before either inserts. Fix at the
+    DB layer: partial unique index `agent_runs(site_id) WHERE status='running' AND
+    goal->>'dryRun'='false'`, treat insert conflict as 409.
+  - The 30-min stale cutoff disarms the guard during legitimately long live runs
+    (prepareStagingTheme is minutes; l4Verify backoff adds up to 12s/page). Key
+    liveness off a heartbeat (`last_step.at`, migration 013) instead of started_at.
+
+- **Run-route hardening mediums (P1, batched)**
+  - Chat endpoint: add size caps on `message`/`currentJsonld` + rate limit
+    (`overrides/chat/route.ts`) — unbounded LLM cost/DB bloat.
+  - Chat save loop: all-or-nothing override persistence (mid-loop failure persists
+    half a correction set).
+  - `credentials.ts`: for shops WITH a stored row, a transient Supabase error
+    silently falls back to env creds for the wrong shop — should throw.
+  - Orphaned `status:"running"` rows never reaped after process crash — sweeper or
+    startup reap.
+  - Staging theme leak when an exception bypasses the rolled_back cleanup path.
+  - `url_list` scope accepts arbitrary external domains — constrain to site domain.
+  - Rehydration page `select("*")` ships raw goal/control/error to the client —
+    select only rendered columns.
+  - Re-assert `assertSafeWriteTheme` before publish (role can flip mid-run).
+
 ## Deferred Items
 
 - **Fix All cost estimate + concurrency control** (P1, Medium effort)
