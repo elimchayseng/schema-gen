@@ -60,6 +60,12 @@ export interface Goal {
   constraints: GoalConstraints;
   /** Locked to auto_apply per plan §4; Phase 2 always runs dry-run regardless. */
   autonomy: "auto_apply";
+  /**
+   * Mirror of RunOptions.dryRun, persisted with the goal in agent_runs so the
+   * run route's concurrency guard can tell live runs from dry runs. RunOptions
+   * remains the execution-time source of truth.
+   */
+  dryRun?: boolean;
 }
 
 // ---- Gates (plan §6) ----

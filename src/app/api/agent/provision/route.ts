@@ -81,9 +81,11 @@ export async function POST(request: Request) {
     .single();
 
   if (siteError || !site) {
+    // Log the raw DB error server-side only; don't leak schema/constraint text to
+    // the client (matches the credential-store error path below).
     console.error("[agent/provision] site upsert failed:", siteError);
     return NextResponse.json(
-      { error: "Failed to create site record", detail: siteError?.message },
+      { error: "Failed to create site record" },
       { status: 500 }
     );
   }

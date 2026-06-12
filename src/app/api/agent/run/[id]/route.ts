@@ -9,9 +9,8 @@ import { setControl } from "@/lib/agent";
  * DB (agent_runs.control), which the run loop polls.
  *
  *   GET  → the run row + its recent actions (reconnect / repaint gate results / diff fallback)
- *   POST → { control: "kill" | "pause" | "resume" } sets agent_runs.control. Only "kill" is
- *          wired in Phase 4; "pause"/"resume" are accepted but map to "run" (Phase 5 owns
- *          durable pause/resume — the dashboard keeps those buttons disabled).
+ *   POST → { control: "kill" } sets agent_runs.control. "kill" is the only control verb;
+ *          anything else is rejected with 400 (pause/resume were removed).
  *
  * agent_runs has RLS enabled with no policies (server-only), so reads use the service-role
  * client AFTER verifying the run's site belongs to the authenticated user.

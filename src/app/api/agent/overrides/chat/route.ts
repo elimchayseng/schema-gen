@@ -107,8 +107,10 @@ export async function POST(request: Request) {
   try {
     edits = await proposeOverrideEdits({ currentJsonld, schemaType, url, message });
   } catch (e) {
+    // Raw provider errors stay server-side (matches the provision route's error path).
+    console.error("[agent/overrides/chat] LLM proposal failed:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
+      { error: "The AI service couldn't process that instruction. Try again." },
       { status: 502 }
     );
   }
@@ -175,8 +177,9 @@ export async function POST(request: Request) {
       );
     }
   } catch (e) {
+    console.error("[agent/overrides/chat] save failed:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
+      { error: "Failed to save corrections" },
       { status: 500 }
     );
   }

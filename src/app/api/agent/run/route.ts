@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { createAdminClient } from "@/lib/supabase";
 import { runGoal, createRun, readControl } from "@/lib/agent";
 import type {
   AgentProgressEvent,
@@ -170,6 +171,50 @@ export async function POST(request: Request) {
 
   // dryRun defaults TRUE — only an explicit false goes live (writes the theme).
   const dryRun = body.dryRun !== false;
+  // Persisted in the goal so the concurrency guard can tell live runs from dry
+  // runs in agent_runs (dry runs write nothing and must never block a live run).
+  goal.dryRun = dryRun;
+
+  // CONCURRENCY GUARD: two live runs against one site corrupt each other — both
+  // snapshot the snippet before the other writes (lost-update merge), and both
+  // claim the same managed staging theme. Refuse to start a live run while another
+  // run on this site is still running. Dry runs write nothing and stay unrestricted.
+  // Rows older than 30 minutes are treated as stale (crashed process) rather than
+  // blocking forever; an active run can still be stopped via the control route.
+  if (!dryRun) {
+    try {
+      const admin = createAdminClient();
+      const staleCutoff = new Date(Date.now() - 30 * 60_000).toISOString();
+      const { data: activeRun } = await admin
+        .from("agent_runs")
+        .select("id, started_at")
+        .eq("site_id", siteId)
+        .eq("status", "running")
+        // Only live runs block (goal.dryRun persisted above). Dry runs write
+        // nothing; rows from before goal.dryRun existed don't match and never block.
+        .eq("goal->>dryRun", "false")
+        .gte("started_at", staleCutoff)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (activeRun) {
+        return NextResponse.json(
+          {
+            error:
+              `A run is already in progress for this site (run ${activeRun.id}). ` +
+              "Stop it from the dashboard or wait for it to finish.",
+            runId: activeRun.id,
+          },
+          { status: 409 }
+        );
+      }
+    } catch (e) {
+      // Best-effort guard — never block a run on a guard read failure, but a
+      // silent failure here would permanently disarm the guard (e.g. bad
+      // service-role key) with no trace.
+      console.error("[agent] concurrency guard read failed; proceeding:", e);
+    }
+  }
 
   // Create the run row FIRST so the route can poll its control flag and return the id in
   // the first event. runGoal is then told to use this id (it skips its own createRun).
@@ -177,8 +222,10 @@ export async function POST(request: Request) {
   try {
     runId = await createRun(goal);
   } catch (e) {
+    // Generic body — raw Supabase/infra errors stay in server logs only.
+    console.error("[agent] createRun failed:", e);
     return NextResponse.json(
-      { error: `Failed to start run: ${e instanceof Error ? e.message : String(e)}` },
+      { error: "Failed to start run. Try again or check the dashboard." },
       { status: 500 }
     );
   }
@@ -242,12 +289,14 @@ export async function POST(request: Request) {
           staging: result.staging ?? null,
         });
       } catch (e) {
+        // Generic frame — raw Supabase/Shopify/LLM errors stay in server logs.
+        console.error("[agent] run failed:", e);
         send({
           step: "error",
           phase: "done",
           runId,
           status: "failed",
-          error: e instanceof Error ? e.message : String(e),
+          error: "Run failed. Check the run report or server logs for details.",
         });
       } finally {
         closed = true;

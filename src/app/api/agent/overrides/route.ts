@@ -61,8 +61,11 @@ export async function GET(request: Request) {
     const overrides = await loadOverrides(siteId, url);
     return NextResponse.json({ overrides });
   } catch (e) {
+    // Log the raw error server-side only; don't leak DB/schema text to the client
+    // (matches the provision route's error path).
+    console.error("[agent/overrides] load failed:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
+      { error: "Failed to load corrections" },
       { status: 500 }
     );
   }
@@ -99,8 +102,9 @@ export async function DELETE(request: Request) {
     await deleteOverride(id, override.siteId);
     return NextResponse.json({ ok: true });
   } catch (e) {
+    console.error("[agent/overrides] delete failed:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
+      { error: "Failed to delete correction" },
       { status: 500 }
     );
   }
