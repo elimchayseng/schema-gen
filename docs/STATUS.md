@@ -2,7 +2,7 @@
 
 > This is the ONE status document. Update it in place; don't create dated
 > siblings. History lives in git and `docs/archive/`.
-> Last updated: 2026-06-11 (post-retro simplification pass).
+> Last updated: 2026-06-12 (post-review-fix pass).
 
 ## Where things stand
 
@@ -18,6 +18,31 @@ snippet to the test theme → L4 live-render verification → preview URL to eye
 explains the store/theme topology and the `?preview_theme_id=` trap).
 
 **Definition of done for agent work:** `npm run verify` green AND `npm run smoke` exit 0.
+
+## What changed in the 2026-06-12 review-fix pass
+
+Adversarial pre-landing review (lib → api → ui) — all fixes landed with
+regression tests, `npm run verify` green (699 tests):
+
+1. **lib hardening** — `overrides.ts` `setAtPath` forbids
+   `__proto__`/`constructor`/`prototype` path segments (an LLM-supplied
+   fieldPath could pollute Object.prototype); `ctx.unique` is now actually
+   wired into `l4Verify`; L4 retries use linear backoff instead of hammering;
+   `audit.ts` tolerates PGRST204 until migration 013 lands.
+2. **409 concurrency guard for live runs** — a second live run on the same site
+   is refused (409 + the blocking run id) while one is active. Dry runs never
+   block (`dryRun` is now persisted in the goal so the guard can tell them
+   apart), and guard read failures are logged, not swallowed.
+3. **Error-body sanitization** — run/provision/overrides/chat routes return
+   generic error bodies; raw Supabase/Shopify/LLM detail stays in server logs.
+   New provision route tests assert nothing leaks.
+4. **UI** — merchant tweaks are pinned to the document they edited: a re-run
+   with fresh `schemaAfter` discards the stale correction instead of masking
+   the new output. Plus the last-run rehydration card and report polish.
+5. **New P0 security items captured** — see `TODOS.md` § "Security &
+   Concurrency": cross-tenant `shopify_credentials` clobbering (must land
+   before signup opens beyond invited users) and guard atomicity + heartbeat
+   liveness, plus a batched P1 hardening list.
 
 ## What changed in the 2026-06-11 simplification pass (retro-driven)
 
@@ -53,20 +78,28 @@ verification a human could run, and mid-run the flow was opaque. Fixes:
 
 ## Open items
 
-1. **Apply migration 013** (`docs/agent/pending-migration-013.sql`) in the
+1. **P0 security items before open signup** — cross-tenant
+   `shopify_credentials` clobbering and concurrency-guard atomicity +
+   heartbeat liveness. Accepted at the 2026-06-12 ship gate because signup is
+   currently invite-only; full detail in `TODOS.md` § "Security & Concurrency".
+2. **Apply migration 013** (`docs/agent/pending-migration-013.sql`) in the
    Supabase SQL editor — until then `last_step` is null and the live-checkpoint
-   display has nothing to read (everything else works).
-2. **Garnerandtow one-shot** — everything rehearsed (30/30 dry-run green);
+   display has nothing to read (everything else works; `audit.ts` tolerates the
+   missing column). The heartbeat-liveness fix for the concurrency guard
+   (TODOS P0) also keys off this column.
+3. **Garnerandtow one-shot** — everything rehearsed (30/30 dry-run green);
    blocked only on real-store credentials. Flow: dry-run → staging-only →
    preview → publish → post-publish verified → Google Rich Results links.
    See `docs/GARNERANDTOW_POC.md` and `docs/MERCHANT_SETUP.md`.
-3. **Dev-store cache convergence** — `verify-live-final.ts` may FAIL a page for
+4. **Dev-store cache convergence** — `verify-live-final.ts` may FAIL a page for
    hours after a publish while Shopify's page cache converges. Reading the
    verdict: `post_publish:stale` = cache, re-poll later; `post_publish:failed` =
    genuinely wrong render (auto-republish of the displaced theme already
    happened).
-4. **Tweak panel** — proven at library level (sticky overrides across
-   regeneration); deserves a browser pass (ACCEPTANCE Part 2 can be extended).
+5. **Tweak panel** — proven at library level (sticky overrides across
+   regeneration), and tweaks are now pinned to document identity so a re-run
+   discards stale corrections; still deserves a browser pass (ACCEPTANCE
+   Part 2 can be extended).
 
 ## Architecture in one paragraph
 
