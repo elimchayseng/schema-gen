@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import AgentRunner from "@/app/site/[id]/agent/AgentRunner";
+import { createAdminClient } from "@/lib/supabase";
+import AgentRunner, { type LastRun } from "@/app/site/[id]/agent/AgentRunner";
 
 /**
  * Agent surface addressed by siteId — the landing page's provision flow lands here
@@ -44,12 +45,35 @@ export default async function AgentBySitePage({
     .limit(1)
     .maybeSingle();
 
+  // Rehydrate-on-mount, same as /site/[id]/agent: the most recent run for this
+  // site, so a reload during/after a run shows the "Last run" card instead of a
+  // blank form. Admin client: agent_runs has RLS with no user policies; ownership
+  // was proven by the sites query above. Best-effort — a read failure just means
+  // no card.
+  let lastRun: LastRun | null = null;
+  try {
+    const admin = createAdminClient();
+    const { data: runRow } = await admin
+      .from("agent_runs")
+      // select("*") not a column list: last_step only exists once migration 013 is
+      // applied, and a missing column in an explicit list errors the whole select.
+      .select("*")
+      .eq("site_id", siteId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (runRow) lastRun = runRow as LastRun;
+  } catch {
+    /* no card */
+  }
+
   return (
     <AgentRunner
       crawlId={latestCrawl?.id ?? siteId}
       siteId={site.id}
       domain={site.domain}
       hasShopCredentials={!!(site as { shop_domain?: string | null }).shop_domain}
+      lastRun={lastRun}
     />
   );
 }

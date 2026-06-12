@@ -4,8 +4,7 @@
  * SchemaTweakPanel (issue #29) — conversational correction of LLM-generated
  * JSON-LD with sticky merchant overrides.
  *
- * Standalone client component; NOT wired into AgentRunner yet (a later round
- * mounts it next to the per-page schema preview). The merchant types a plain
+ * Mounted inside AgentRunner's per-page detail view. The merchant types a plain
  * instruction ("the brand is Garner & Tow"), the chat endpoint turns it into
  * validated field edits, persists them as sticky overrides, and returns the
  * updated JSON-LD via onUpdated. Stored overrides survive every agent re-run.

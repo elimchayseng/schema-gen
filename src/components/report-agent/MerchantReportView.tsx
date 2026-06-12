@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { MerchantReport, ReportGate, ReportPage } from "@/lib/agent/report";
 
 /**
@@ -23,9 +24,9 @@ export default function MerchantReportView({
     <div className="mx-auto max-w-4xl">
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
-        <a href={backHref} className="text-xs text-text-muted hover:text-text-secondary">
+        <Link href={backHref} className="text-xs text-text-muted hover:text-text-secondary">
           &larr; Back
-        </a>
+        </Link>
         <h1 className="font-serif text-lg text-text-primary">Agent Run Report</h1>
         {report.siteDomain && (
           <span className="rounded-sm bg-surface-3 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-text-secondary">
@@ -217,7 +218,7 @@ function PageRow({
 
           {/* Before / after JSON */}
           {(page.before != null || page.after != null) && (
-            <div className="mb-3 grid grid-cols-2 gap-3">
+            <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <h4 className="mb-1 text-[10px] uppercase tracking-wider text-text-muted">
                   Before

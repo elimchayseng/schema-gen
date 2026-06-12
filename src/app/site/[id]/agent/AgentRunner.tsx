@@ -1181,11 +1181,20 @@ function PageDetailView({
       ? injected
       : dbDetail?.after;
 
-  const tweakType = primarySchemaType(injectedValue);
+  // A saved merchant correction (issue #29) comes back from the chat endpoint as
+  // the post-edit document. Fold it in: otherwise the preview above and the next
+  // chat request both keep using the stale pre-correction JSON-LD. The tweak is
+  // pinned to the document it edited — a re-run that streams a fresh schemaAfter
+  // (new object reference) discards the stale correction instead of masking it.
+  const [tweaked, setTweaked] = useState<{ base: unknown; value: unknown } | null>(null);
+  const shownValue =
+    tweaked && tweaked.base === injectedValue ? tweaked.value : injectedValue;
+
+  const tweakType = primarySchemaType(shownValue);
 
   return (
     <div className="space-y-2">
-      <SchemaBlock label="Structured data to be injected" value={injectedValue} highlight />
+      <SchemaBlock label="Structured data to be injected" value={shownValue} highlight />
       {before != null && (Array.isArray(before) ? before.length > 0 : true) && (
         <SchemaBlock label="Before (current page)" value={before} />
       )}
@@ -1194,7 +1203,7 @@ function PageDetailView({
       )}
       {/* Optional merchant correction (issue #29) — sticky overrides via chat. Collapsed
           by default: the default flow needs no merchant input. */}
-      {siteId && tweakType && injectedValue != null && (
+      {siteId && tweakType && shownValue != null && (
         <details className="rounded-md border border-fix/30">
           <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-fix-bright">
             Refine with AI — correct anything that&apos;s wrong (optional)
@@ -1204,7 +1213,8 @@ function PageDetailView({
               siteId={siteId}
               url={url}
               schemaType={tweakType}
-              jsonld={injectedValue}
+              jsonld={shownValue}
+              onUpdated={(v) => setTweaked({ base: injectedValue, value: v })}
             />
           </div>
         </details>
