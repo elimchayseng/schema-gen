@@ -267,6 +267,12 @@ const WRAPPER_RE = new RegExp(
  * Remove every SCHEMAGEN:SUPPRESS wrapper, restoring the original bytes
  * exactly: unsuppressAll(suppress(x)) === x. A replacement FUNCTION is used so
  * `$`-sequences in merchant content cannot be misinterpreted as replace patterns.
+ *
+ * Reversibility primitive (issue #37): exported with no production caller TODAY
+ * by design — it is the round-trip proof the suppress tests assert, and the hook
+ * a future uninstall/un-suppress flow restores theme-native emission through
+ * (apply rollback restores the whole asset from backup, not via this). Intentional,
+ * not dead code.
  */
 export function unsuppressAll(assetText: string): string {
   return assetText.replace(WRAPPER_RE, (_whole, inner: string) => inner);
@@ -284,7 +290,14 @@ export interface SuppressionListing {
 
 const PREVIEW_LENGTH = 120;
 
-/** List every suppressed region in an asset, with previews for audit/report. */
+/**
+ * List every suppressed region in an asset, with previews for audit/report.
+ *
+ * Forensic primitive (issue #37): exported with no production caller today by
+ * design — it backs the suppress-listing tests and is the read side a future
+ * "what did we silence on this theme?" report/uninstall surface will call.
+ * Intentional, not dead code.
+ */
 export function listSuppressions(assetText: string): SuppressionListing[] {
   const listings: SuppressionListing[] = [];
   WRAPPER_RE.lastIndex = 0;
