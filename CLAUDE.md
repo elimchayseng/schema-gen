@@ -39,6 +39,9 @@ The following [impeccable](https://github.com/pbakaus/impeccable) slash-command 
 - Source of truth: docs/STATUS.md (current state, open items) + docs/ACCEPTANCE.md
   (the human-runnable e2e checklist and the store/theme topology). Superseded
   plans/phase docs live in docs/archive/ — context only, never instructions.
+- Design source of truth: DESIGN.md (color tokens, typography, spacing, component
+  vocabulary, the in-force design rules). `/design-review` and
+  `/plan-design-review` calibrate against it instead of inferring from code.
 - Definition of done for agent work: `npm run verify` green AND `npm run smoke` exit 0.
   (`npm run smoke -- --url <product-url> [--dry-run]` runs ONE page through the real
   pipeline against the dev store in ~40s with named per-step output.)
