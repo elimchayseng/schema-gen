@@ -286,6 +286,9 @@ export default function AgentRunner({
   const [runId, setRunId] = useState<string | null>(null);
   const [phase, setPhase] = useState<string | null>(null);
   const [counts, setCounts] = useState({ perceived: 0, queued: 0, acted: 0, satisfied: 0, unsatisfied: 0 });
+  // Total resolved target URLs (issue #15), streamed before the scan loop. Lets us
+  // account for pages a mid-perceive kill never reached (they emit no perceive event).
+  const [targetTotal, setTargetTotal] = useState<number | null>(null);
   const [rows, setRows] = useState<Record<string, PageRow>>({});
   const [perceivedUrls, setPerceivedUrls] = useState<string[]>([]);
   const [summary, setSummary] = useState<DoneSummary | null>(null);
@@ -325,6 +328,7 @@ export default function AgentRunner({
       runIdRef.current = ev.runId;
     }
     if (ev.phase) setPhase(ev.phase);
+    if (typeof ev.targetTotal === "number") setTargetTotal(ev.targetTotal);
     // Staging events (issue #26): keep the latest message; the previewUrl is sticky once
     // it arrives so the "see your staged store" link survives later events.
     if (ev.phase === "stage" || ev.phase === "publish") {
@@ -430,6 +434,7 @@ export default function AgentRunner({
       terminalRef.current = false;
       setPhase(null);
       setStageInfo({});
+      setTargetTotal(null);
       setCounts({ perceived: 0, queued: 0, acted: 0, satisfied: 0, unsatisfied: 0 });
 
       const requireTypes = requireTypesInput.split(",").map((s) => s.trim()).filter(Boolean);
@@ -810,7 +815,12 @@ export default function AgentRunner({
             )}
             <div className="mt-3 grid grid-cols-3 gap-3 text-center text-xs sm:grid-cols-5">
               {([
-                ["Found", counts.perceived],
+                // Show progress against the resolved total (issue #15) so a run
+                // killed mid-scan shows how many pages were never reached.
+                [
+                  "Found",
+                  targetTotal != null ? `${counts.perceived} / ${targetTotal}` : counts.perceived,
+                ],
                 ["Queued", counts.queued],
                 ["Processed", counts.acted],
                 ["Ready", counts.satisfied],

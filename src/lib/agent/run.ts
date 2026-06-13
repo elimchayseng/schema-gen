@@ -799,7 +799,9 @@ export async function runGoal(
       return undefined;
     };
 
-    emit({ phase: "perceive", runId, perceived: 0, queued: 0 });
+    // Stream the resolved target total (issue #15) BEFORE the scan loop, so the UI
+    // can account for every page — including ones a mid-perceive kill never reaches.
+    emit({ phase: "perceive", runId, perceived: 0, queued: 0, targetTotal: urls.length });
     const perceived: PerceivedPage[] = [];
     let killed = false;
     // Bounded fan-out: scan up to `concurrency` pages at once, fold results in order so
