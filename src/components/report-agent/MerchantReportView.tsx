@@ -124,15 +124,21 @@ function SummaryCards({ summary }: { summary: MerchantReport["summary"] }) {
     { num: summary.failed, label: "Failed", color: summary.failed > 0 ? "text-error" : "text-text-muted" },
     { num: summary.notReached, label: "Not Reached", color: "text-text-muted" },
   ];
+  // Wrapping grid (3-up on mobile, 6-up from sm) instead of one flex row — six
+  // cells in a single 375px row collapse to ~55px each and the 10px labels
+  // collide. gap-px over a bg-border fill draws the dividers without per-cell
+  // border math that breaks on wrap.
   return (
-    <div className="mb-5 flex items-center overflow-hidden rounded-lg border border-border bg-surface-1">
-      {cells.map((c, i) => (
+    <div className="mb-5 grid grid-cols-3 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-6">
+      {cells.map((c) => (
         <div
           key={c.label}
-          className={`flex flex-1 flex-col items-center justify-center gap-0.5 py-3 ${i < cells.length - 1 ? "border-r border-border" : ""}`}
+          className="flex flex-col items-center justify-center gap-0.5 bg-surface-1 py-3"
         >
           <span className={`font-mono text-base font-bold ${c.color}`}>{c.num}</span>
-          <span className="text-[10px] uppercase tracking-wider text-text-muted">{c.label}</span>
+          <span className="text-center text-[10px] uppercase tracking-wider text-text-muted">
+            {c.label}
+          </span>
         </div>
       ))}
     </div>
@@ -220,9 +226,13 @@ function PageRow({
           {(page.before != null || page.after != null) && (
             <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <h4 className="mb-1 text-[10px] uppercase tracking-wider text-text-muted">
+                {/* Field labels, not document headings — using <h4> here skipped
+                    h3 in the outline whenever RequiredActionsCard (the only h3)
+                    was absent. These are <pre> captions, so a styled span is the
+                    honest element. */}
+                <span className="mb-1 block text-[10px] uppercase tracking-wider text-text-muted">
                   Before
-                </h4>
+                </span>
                 <pre className="max-h-60 overflow-auto rounded-md bg-surface-3 p-3 text-[11px] text-text-secondary">
                   {page.before != null
                     ? JSON.stringify(page.before, null, 2)
@@ -230,9 +240,9 @@ function PageRow({
                 </pre>
               </div>
               <div>
-                <h4 className="mb-1 text-[10px] uppercase tracking-wider text-fix-bright">
+                <span className="mb-1 block text-[10px] uppercase tracking-wider text-fix-bright">
                   After (SchemaGen)
-                </h4>
+                </span>
                 <pre className="max-h-60 overflow-auto rounded-md bg-surface-3 p-3 text-[11px] text-text-secondary">
                   {page.after != null ? JSON.stringify(page.after, null, 2) : "—"}
                 </pre>
@@ -282,11 +292,15 @@ function DispositionBadge({ disposition }: { disposition: ReportPage["dispositio
 
 /** Compact pass/fail dots for the collapsed row, one per gate (L0..L4). */
 function GateDots({ gates }: { gates: ReportGate[] }) {
+  const summary = gateTitle(gates);
+  // aria-label (not title-only) so the gate summary reaches touch + screen
+  // readers, which never see a hover title.
   return (
-    <span className="flex items-center gap-1" title={gateTitle(gates)}>
+    <span className="flex items-center gap-1" role="img" aria-label={summary} title={summary}>
       {gates.map((g) => (
         <span
           key={g.level}
+          aria-hidden
           className={`h-1.5 w-1.5 rounded-full ${
             g.passed === true ? "bg-valid" : g.passed === false ? "bg-error" : "bg-surface-3"
           }`}
@@ -303,12 +317,21 @@ function GateChip({ gate }: { gate: ReportGate }) {
       : gate.passed === false
         ? "border-error/25 bg-error-dim/20 text-error"
         : "border-border bg-surface-2 text-text-muted";
+  const state =
+    gate.passed === true ? "passed" : gate.passed === false ? "failed" : "not evaluated";
+  // Expose the gate detail via aria-label too — title= alone is invisible to
+  // touch and screen readers, and the detail is exactly the "why" a merchant
+  // needs when a gate fails.
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${tone}`}
       title={gate.detail}
+      aria-label={`${gate.label}: ${state}${gate.detail ? ` — ${gate.detail}` : ""}`}
     >
-      {gate.passed === true ? "✓" : gate.passed === false ? "✕" : "–"} {gate.label}
+      <span aria-hidden>
+        {gate.passed === true ? "✓" : gate.passed === false ? "✕" : "–"}
+      </span>{" "}
+      {gate.label}
     </span>
   );
 }

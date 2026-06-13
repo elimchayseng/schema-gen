@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 // Value import MUST come from the pure leaf module, not the @/lib/agent barrel: the
 // barrel re-exports runGoal/audit → supabase → node:crypto, which a client bundle can't
@@ -109,6 +109,36 @@ function richResultsTestUrl(pageUrl: string): string {
   return `https://search.google.com/test/rich-results?url=${encodeURIComponent(pageUrl)}`;
 }
 
+/**
+ * Map a raw agent_runs.status to merchant-facing language + tone, mirroring the
+ * vocabulary buildVerdict uses. Crucially, a user-killed run is NEUTRAL, never an
+ * error color (it's not a failure — they stopped it). Keeps raw DB enums,
+ * checkpoints, and error strings out of the card.
+ */
+function describeLastRun(status: string): { label: string; tone: string; detail: string | null } {
+  switch (status) {
+    case "done":
+      return { label: "Completed", tone: "bg-valid-dim/40 text-valid", detail: null };
+    case "running":
+      return { label: "Running", tone: "bg-fix/20 text-fix-bright", detail: null };
+    case "killed":
+      return {
+        label: "Stopped by you",
+        tone: "bg-surface-2 text-text-secondary",
+        detail: "You stopped this run before it finished.",
+      };
+    case "failed":
+    case "error":
+      return {
+        label: "Didn't finish",
+        tone: "bg-error-dim/20 text-error",
+        detail: "Something went wrong, so nothing was published.",
+      };
+    default:
+      return { label: "Pending", tone: "bg-surface-2 text-text-secondary", detail: null };
+  }
+}
+
 /** A single gate verdict chip. null = gate not applicable for this goal/phase. */
 function GateChip({ level, result }: { level: keyof GateResults; result: GateResult | null | undefined }) {
   const label = GATE_LABELS[level] ?? level;
@@ -123,7 +153,9 @@ function GateChip({ level, result }: { level: keyof GateResults; result: GateRes
   const state = result.passed ? "passed" : "failed";
   const aria = `${label}: ${state}${result.detail ? ` — ${result.detail}` : ""}`;
   return result.passed ? (
-    <span className={`${base} bg-valid/15 text-accent-bright`} aria-label={aria}>{label} ✓</span>
+    // Stay within the valid token family (bg + text) — accent-bright here mixed
+    // the emerald-bg "valid" signal with the accent ramp (design-token rule).
+    <span className={`${base} bg-valid/15 text-valid`} aria-label={aria}>{label} ✓</span>
   ) : (
     <span className={`${base} bg-error/15 text-error`} aria-label={aria}>{label} ✗</span>
   );
@@ -735,37 +767,28 @@ export default function AgentRunner({
             but the run itself is durable — point back at it instead of a blank page. */}
         {!running && !summary && !error && lastRun && (
           <div className="mt-4 rounded-lg border border-border bg-surface-card p-5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-text-primary">Last run</h2>
-              <span
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                  lastRun.status === "done"
-                    ? "bg-valid-dim/40 text-valid"
-                    : lastRun.status === "running"
-                      ? "bg-fix/20 text-fix-bright"
-                      : "bg-error-dim/20 text-error"
-                }`}
-              >
-                {lastRun.status}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-text-secondary">
-              {lastRun.ended_at
-                ? `Finished ${new Date(lastRun.ended_at).toLocaleString()}`
-                : lastRun.started_at
-                  ? `Started ${new Date(lastRun.started_at).toLocaleString()}`
-                  : ""}
-              {lastRun.last_step?.step && (
+            {(() => {
+              const display = describeLastRun(lastRun.status);
+              return (
                 <>
-                  {" · last checkpoint: "}
-                  <span className="font-mono">
-                    {lastRun.last_step.step}
-                    {lastRun.last_step.status ? ` ${lastRun.last_step.status}` : ""}
-                  </span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-sm font-semibold text-text-primary">Last run</h2>
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${display.tone}`}>
+                      {display.label}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    {lastRun.ended_at
+                      ? `Finished ${new Date(lastRun.ended_at).toLocaleString()}`
+                      : lastRun.started_at
+                        ? `Started ${new Date(lastRun.started_at).toLocaleString()}`
+                        : ""}
+                    {/* Plain-language detail only — no raw DB checkpoint or error string. */}
+                    {display.detail && <span> · {display.detail}</span>}
+                  </p>
                 </>
-              )}
-              {lastRun.error && <span className="text-error"> · {lastRun.error}</span>}
-            </p>
+              );
+            })()}
             <div className="mt-3">
               <Link
                 href={`/site/${crawlId}/agent/report/${lastRun.id}`}
@@ -973,14 +996,15 @@ export default function AgentRunner({
               <p className="text-xs text-text-muted">
                 Each page runs these checks in order:{" "}
                 <b className="text-text-secondary">Built</b> → <b className="text-text-secondary">Valid</b> → <b className="text-text-secondary">Rich-eligible</b> → <b className="text-text-secondary">No-regression</b> → <b className="text-text-secondary">Live-verified</b>.{" "}
-                <span className="text-accent-bright">✓ pass</span> · <span className="text-error">✗ fail</span> ·{" "}
+                <span className="text-valid">✓ pass</span> · <span className="text-error">✗ fail</span> ·{" "}
                 <span className="text-text-muted">n/a not checked</span>.
               </p>
 
               <div className="mt-3 space-y-2">
                 <GroupSection
                   title="Need work"
-                  emoji="⚠️"
+                  icon={GROUP_ICONS.warn}
+                  tone="text-warn"
                   urls={groups.failed}
                   rows={rows}
                   open={leadGroup === "failed"}
@@ -992,7 +1016,8 @@ export default function AgentRunner({
                 />
                 <GroupSection
                   title="Not reached"
-                  emoji="⏸"
+                  icon={GROUP_ICONS.pause}
+                  tone="text-text-muted"
                   urls={groups.notReached}
                   rows={rows}
                   open={leadGroup === "notReached"}
@@ -1003,7 +1028,8 @@ export default function AgentRunner({
                 />
                 <GroupSection
                   title={summary.dryRun ? "Ready to apply" : "Made Google-ready"}
-                  emoji="✅"
+                  icon={GROUP_ICONS.check}
+                  tone="text-valid"
                   urls={groups.fixed}
                   rows={rows}
                   open={leadGroup === "fixed"}
@@ -1015,7 +1041,8 @@ export default function AgentRunner({
                 />
                 <GroupSection
                   title="Already good"
-                  emoji="⏭"
+                  icon={GROUP_ICONS.skip}
+                  tone="text-text-muted"
                   urls={groups.alreadyGood}
                   rows={rows}
                   open={leadGroup === "alreadyGood"}
@@ -1044,10 +1071,44 @@ export default function AgentRunner({
   );
 }
 
+/**
+ * Status glyphs for the page groups — inline SVG (currentColor, 16×16) matching
+ * the rest of the icon system. Replaces raw emoji, which renders
+ * platform-dependently and breaks the visual language. Color is inherited from a
+ * tone class on the wrapper.
+ */
+const GROUP_ICONS: Record<"warn" | "pause" | "check" | "skip", ReactNode> = {
+  warn: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 1.5L15 14H1L8 1.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <line x1="8" y1="6" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="8" cy="11.5" r="0.9" fill="currentColor" />
+    </svg>
+  ),
+  pause: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <line x1="6" y1="3.5" x2="6" y2="12.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="10" y1="3.5" x2="10" y2="12.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  ),
+  check: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2.5 8.5L6 12L13.5 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  skip: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3 3.5L9 8L3 12.5V3.5Z" fill="currentColor" />
+      <line x1="12" y1="3.5" x2="12" y2="12.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  ),
+};
+
 /** A collapsible group of pages (Need work / Not reached / Ready / Already good). */
 function GroupSection({
   title,
-  emoji,
+  icon,
+  tone,
   urls,
   rows,
   open,
@@ -1059,7 +1120,9 @@ function GroupSection({
   siteId,
 }: {
   title: string;
-  emoji: string;
+  icon: ReactNode;
+  /** Tailwind text-color class applied to the icon (it draws with currentColor). */
+  tone: string;
   urls: string[];
   rows: Record<string, PageRow>;
   open: boolean;
@@ -1075,7 +1138,7 @@ function GroupSection({
   return (
     <details open={open} className="rounded-md border border-border">
       <summary className="flex min-h-[44px] cursor-pointer items-center gap-2 px-3 py-2 text-sm font-medium text-text-primary">
-        <span aria-hidden>{emoji}</span>
+        <span className={`flex shrink-0 items-center ${tone}`}>{icon}</span>
         <span>{title}</span>
         <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-text-secondary">{urls.length}</span>
       </summary>
