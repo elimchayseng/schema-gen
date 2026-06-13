@@ -120,6 +120,9 @@ const locatorMock = vi.hoisted(() => {
 vi.mock("@/lib/shopify/source-locator", () => ({
   locateSchemaSources: locatorMock.locateSchemaSources,
   makeSourceLocatorOps: locatorMock.makeSourceLocatorOps,
+  // Real tokenizer (issue #37 dedup): run.ts now imports the shared regex from
+  // here for pickContainsLiteral; keep the mock's value identical to the source.
+  STRING_LITERAL_RE: /"(?:[^"\\\n]|\\.)*"/g,
 }));
 
 import { processPage } from "@/lib/crawl/process-page";

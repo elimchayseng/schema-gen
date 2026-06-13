@@ -11,6 +11,7 @@
  * per-page deep link the merchant clicks to confirm with Google themselves.
  */
 import { classifyPageType, PAGE_TYPE_MATRIX } from "./page-type-matrix";
+import { schemaTypesOf } from "./schema-types";
 import type { GateResults } from "./types";
 
 // ---- Input row shapes (snake_case, exactly as the two tables store them) ----
@@ -132,27 +133,6 @@ export function googleRichResultsUrl(pageUrl: string): string {
 }
 
 // ---- Helpers ----
-
-/** Collect schema.org @type values from a JSON-LD value (object, array, or @graph). */
-function extractSchemaTypes(value: unknown): string[] {
-  const types = new Set<string>();
-  const visit = (v: unknown): void => {
-    if (Array.isArray(v)) {
-      v.forEach(visit);
-      return;
-    }
-    if (v === null || typeof v !== "object") return;
-    const obj = v as Record<string, unknown>;
-    const t = obj["@type"];
-    if (typeof t === "string") types.add(t);
-    else if (Array.isArray(t)) {
-      for (const x of t) if (typeof x === "string") types.add(x);
-    }
-    if (Array.isArray(obj["@graph"])) visit(obj["@graph"]);
-  };
-  visit(value);
-  return [...types];
-}
 
 function isNonEmptySchema(value: unknown): boolean {
   if (value == null) return false;
@@ -409,7 +389,7 @@ export function buildMerchantReport(
       const after = isNonEmptySchema(act.schema_after)
         ? act.schema_after
         : undefined;
-      const schemaTypes = extractSchemaTypes(after ?? before ?? null);
+      const schemaTypes = schemaTypesOf(after ?? before ?? null);
       const selfCorrected = /self-corrected/.test(act.outcome);
       const base = {
         url: g.url,

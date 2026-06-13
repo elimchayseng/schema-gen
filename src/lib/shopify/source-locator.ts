@@ -240,7 +240,14 @@ const COMMON_TOKENS = new Set([
   "http://schema.org/",
 ]);
 
-const STRING_TOKEN_RE = /"(?:[^"\\\n]|\\.)*"/g;
+/**
+ * Quoted-string-literal tokenizer (issue #37 dedup). The single definition the
+ * suppression-needle picker (run.ts pickContainsLiteral) and this locator both
+ * use — they MUST agree on what a "literal" is. Only ever used with
+ * String.prototype.match (which ignores lastIndex), so sharing the /g instance is
+ * safe; do not use it with .exec in a loop without resetting lastIndex.
+ */
+export const STRING_LITERAL_RE = /"(?:[^"\\\n]|\\.)*"/g;
 const MAX_TOKENS = 200;
 
 interface BlockToken {
@@ -254,7 +261,7 @@ interface BlockToken {
 function extractTokens(raw: string): BlockToken[] {
   const seen = new Set<string>();
   const tokens: BlockToken[] = [];
-  for (const m of raw.match(STRING_TOKEN_RE) ?? []) {
+  for (const m of raw.match(STRING_LITERAL_RE) ?? []) {
     if (tokens.length >= MAX_TOKENS) break;
     const inner = m.slice(1, -1);
     if (inner.length < 2 || seen.has(m)) continue;

@@ -27,9 +27,11 @@ import {
 import {
   locateSchemaSources,
   makeSourceLocatorOps,
+  STRING_LITERAL_RE,
   type SourceLocatorOps,
 } from "@/lib/shopify/source-locator";
 import { findJsonLdScriptRanges } from "@/lib/shopify/suppress";
+import { schemaTypesOf } from "./schema-types";
 import type { ShopContext } from "@/lib/shopify/types";
 import type { ExtractedJsonLd } from "@/lib/url-validator/types";
 import { planTasks } from "./planner";
@@ -254,11 +256,13 @@ async function resolveTargetUrls(
 }
 
 /**
- * Resolve the theme the live apply writes to. Per CLAUDE.md, the agent only ever
- * touches SHOPIFY_TEST_THEME_ID (or a duplicate) — never the published live theme.
- * Absent/invalid env is a hard error so a live run can't silently target the wrong theme.
+ * Resolve the env-configured write theme (issue #37 rename: was resolveWriteThemeId,
+ * which collided with themes.ts's async guarded resolveWriteThemeId — this one is the
+ * sync SHOPIFY_TEST_THEME_ID env parse). Per CLAUDE.md, the agent only ever touches
+ * SHOPIFY_TEST_THEME_ID (or a duplicate) — never the published live theme. Absent/
+ * invalid env is a hard error so a live run can't silently target the wrong theme.
  */
-function resolveWriteThemeId(): number {
+function resolveEnvThemeId(): number {
   const raw = process.env.SHOPIFY_TEST_THEME_ID;
   const id = Number(raw);
   if (!raw || !Number.isInteger(id) || id <= 0) {
@@ -381,34 +385,12 @@ async function resolveAnalysisThemeId(
     warn("themesList failed for dry-run authoritative analysis", e);
   }
   try {
-    return resolveWriteThemeId();
+    return resolveEnvThemeId();
   } catch {
     return null;
   }
 }
 
-/** All @type values declared by a parsed JSON-LD block (walks arrays + @graph). */
-function blockSchemaTypes(parsed: unknown): string[] {
-  const types = new Set<string>();
-  const visit = (v: unknown): void => {
-    if (Array.isArray(v)) {
-      v.forEach(visit);
-      return;
-    }
-    if (v === null || typeof v !== "object") return;
-    const obj = v as Record<string, unknown>;
-    const t = obj["@type"];
-    if (typeof t === "string") types.add(t);
-    else if (Array.isArray(t)) {
-      for (const x of t) if (typeof x === "string") types.add(x);
-    }
-    if (Array.isArray(obj["@graph"])) visit(obj["@graph"]);
-  };
-  visit(parsed);
-  return [...types];
-}
-
-const QUOTED_LITERAL_RE = /"(?:[^"\\\n]|\\.)*"/g;
 
 /**
  * Pick the `contains` needle a suppression will use to find the emitting script
@@ -440,7 +422,7 @@ export function pickContainsLiteral(
   raw: string,
   assetText: string | null
 ): string | undefined {
-  const literals = [...new Set(raw.match(QUOTED_LITERAL_RE) ?? [])].filter(
+  const literals = [...new Set(raw.match(STRING_LITERAL_RE) ?? [])].filter(
     (l) => l.length >= 4 // at least 2 inner chars — single chars prove nothing
   );
   literals.sort((a, b) => b.length - a.length);
@@ -535,7 +517,7 @@ async function buildSuppressionPlan(args: {
       const res = located[i];
       if (!res || res.source === "schemagen") continue;
       const unparseable = !!block.parseError || block.parsed == null;
-      const types = unparseable ? [] : blockSchemaTypes(block.parsed);
+      const types = unparseable ? [] : schemaTypesOf(block.parsed);
 
       if (res.source.startsWith("theme:") && res.assetKey) {
         // Subtype-aware intersection, plus: any unparseable OR parsed-but-invalid
@@ -995,10 +977,10 @@ export async function runGoal(
       }
       emit({ phase: "apply", queued: applyItems.length });
       // Staging mode writes to the fresh duplicate; env mode keeps the pre-#26 path
-      // (including resolveWriteThemeId's hard error on a bad env id) byte-identical.
+      // (including resolveEnvThemeId's hard error on a bad env id) byte-identical.
       const themeId = staging
         ? staging.stagingThemeId
-        : resolveWriteThemeId();
+        : resolveEnvThemeId();
       const shop = shopCtx?.shop ?? getShopifyConfig().shop;
 
       // Enforce the never-touch-published invariant at runtime, not just in the
