@@ -127,6 +127,21 @@ describe("runGoal progress streaming (Phase 4)", () => {
     expect(acts[1]?.status).toBe("ok");
   });
 
+  it("streams the resolved target total on the first perceive event (#15)", async () => {
+    const events: AgentProgressEvent[] = [];
+    await runGoal(goal, { persistAudit: false, onProgress: (e) => events.push(e) });
+
+    // The init perceive event carries targetTotal BEFORE any per-URL scan, so the
+    // UI can account for pages a mid-perceive kill never reaches.
+    const init = events.find((e) => e.phase === "perceive" && e.targetTotal != null);
+    expect(init).toBeDefined();
+    expect(init?.targetTotal).toBe(2); // goal resolves to A + B
+    // It precedes the first per-URL perceive event.
+    const initIdx = events.indexOf(init!);
+    const firstUrlPerceive = events.findIndex((e) => e.phase === "perceive" && e.url);
+    expect(initIdx).toBeLessThan(firstUrlPerceive);
+  });
+
   it("act events carry gate results and running counts", async () => {
     const events: AgentProgressEvent[] = [];
     await runGoal(goal, { persistAudit: false, onProgress: (e) => events.push(e) });

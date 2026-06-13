@@ -267,6 +267,14 @@ export interface AgentProgressEvent {
    * the live, visible failure reason so the operator never has to hover a chip.
    */
   outcome?: string;
+  /**
+   * Total resolved target URLs for this run (issue #15), streamed on the first
+   * perceive event BEFORE the scan loop. Lets the UI show "N not yet scanned"
+   * and account for every page even when a run is killed mid-perceive — those
+   * pages never emit a per-URL perceive event, so without this total the client
+   * would silently under-count them.
+   */
+  targetTotal?: number;
   /** Running counts. */
   perceived?: number;
   queued?: number;
