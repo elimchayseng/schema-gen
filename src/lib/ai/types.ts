@@ -36,14 +36,6 @@ export interface ValidatedRecommendation extends SchemaRecommendation {
   refinementPasses?: number;
 }
 
-/** Full API response from /api/ai/generate */
-export interface GenerateResponse {
-  pageType: string;
-  recommendations: ValidatedRecommendation[];
-  mergedJsonld: Record<string, unknown>[];
-  notes: string[];
-}
-
 /** OpenAI-compatible message for LLM requests */
 export interface LLMMessage {
   role: "system" | "user" | "assistant";
