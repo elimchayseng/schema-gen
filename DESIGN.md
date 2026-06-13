@@ -131,10 +131,10 @@ h1→h2→h4); if a card is conditionally absent, the levels below it shift up.
 - **Card** — `bg-surface-card border border-border rounded-xl`. The base
   container for panels, banners, and report sections.
 - **Primary action** — emerald accent for run/confirm/go.
-- **Fix action** — indigo (`fix`). **One recipe** (pick and keep it consistent
-  across `AgentRunner`, `SchemaTweakPanel`, `AgentHero`): `bg-fix text-white
-  hover:bg-fix-dim`. Don't mix `text-white+hover:bg-fix-dim` with
-  `text-text-primary+hover:bg-fix-bright` (issue #36).
+- **Fix action** — indigo (`fix`). **One recipe**, consistent across
+  `AgentRunner`, `SchemaTweakPanel`, `AgentHero`: `bg-fix text-text-primary
+  hover:bg-fix-bright` (token-based; size/padding may vary by placement). Don't
+  reintroduce the `text-white + hover:bg-fix-dim` variant (issue #36).
 - **GateChip** — pass uses the `valid` family throughout (background *and*
   text); fail uses `error`. Failure detail must be exposed via `aria-label`,
   not `title=` alone (touch + screen-reader accessible).
