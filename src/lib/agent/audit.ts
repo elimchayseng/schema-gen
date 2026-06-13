@@ -10,6 +10,32 @@ import type {
   HaltSignal,
 } from "./types";
 
+/** PostgREST returns at most 1000 rows per request; page past it (issue #35). */
+const PAGE_SIZE = 1000;
+
+/**
+ * Fetch EVERY row of a query, paging with .range() until a short page (issue #35).
+ * A bare select caps at 1000 rows and silently truncates — for a full-catalog run
+ * the report would drop actions and loadCommittedUrls could re-process committed
+ * pages. `buildPage(from, to)` must return a PostgREST range query for [from,to].
+ */
+export async function fetchAllRows<T>(
+  buildPage: (
+    from: number,
+    to: number
+  ) => PromiseLike<{ data: T[] | null; error: unknown }>
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await buildPage(from, from + PAGE_SIZE - 1);
+    if (error) throw error instanceof Error ? error : new Error(String(error));
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 export async function createRun(goal: Goal): Promise<string> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
@@ -82,14 +108,19 @@ export async function recordAction(
 export async function loadCommittedUrls(runId: string): Promise<Set<string>> {
   try {
     const supabase = createAdminClient();
-    const { data, error } = await supabase
-      .from("agent_actions")
-      .select("url")
-      .eq("run_id", runId)
-      .eq("action", "verify")
-      .eq("outcome", "l4_pass");
-    if (error || !data) return new Set();
-    return new Set((data as { url: string }[]).map((r) => r.url));
+    // Page past the 1000-row cap (issue #35): a full-catalog run can have more
+    // than 1000 l4_pass rows, and a truncated set would re-process committed pages.
+    const rows = await fetchAllRows<{ url: string }>((from, to) =>
+      supabase
+        .from("agent_actions")
+        .select("url")
+        .eq("run_id", runId)
+        .eq("action", "verify")
+        .eq("outcome", "l4_pass")
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    );
+    return new Set(rows.map((r) => r.url));
   } catch {
     return new Set();
   }

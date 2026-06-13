@@ -182,10 +182,28 @@ async function loadEmitters(
 
   const all = await ops.assetsList(themeId);
   const plausible = all.filter((a) => EMITTER_KEY_RE.test(a.key));
+
+  // Fetch the candidate assets with bounded concurrency (issue #35): the prior
+  // serial assetGet-per-file was O(assets) round-trips on every authoritative run
+  // and bit hard at full-catalog scale. Order is preserved so the emitter list
+  // (and therefore needle selection) stays deterministic.
+  const FETCH_CONCURRENCY = 4;
+  const fetched: (Awaited<ReturnType<SourceLocatorOps["assetGet"]>> | null)[] =
+    new Array(plausible.length).fill(null);
+  for (let i = 0; i < plausible.length; i += FETCH_CONCURRENCY) {
+    const batch = plausible.slice(i, i + FETCH_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((meta) => ops.assetGet(themeId, meta.key))
+    );
+    results.forEach((full, j) => {
+      fetched[i + j] = full;
+    });
+  }
+
   const emitters: EmitterAsset[] = [];
-  for (const meta of plausible) {
-    const full = await ops.assetGet(themeId, meta.key);
-    const text = full.value;
+  for (let idx = 0; idx < plausible.length; idx++) {
+    const meta = plausible[idx];
+    const text = fetched[idx]?.value;
     if (text == null) continue;
     const filterExpressions = (text.match(STRUCTURED_DATA_FILTER_RE) ?? []).map(
       (expression) => ({ expression, kind: filterKindOf(expression) })

@@ -26,6 +26,8 @@ const h = vi.hoisted(() => {
               state.eqs.push({ col, val });
               return builder;
             },
+            order: () => builder,
+            range: () => builder, // fetchAllRows paging (issue #35)
             then(resolve: (v: unknown) => void) {
               resolve(state.selectResult);
             },
