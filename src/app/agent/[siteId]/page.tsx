@@ -8,10 +8,10 @@ import AgentRunner, { type LastRun } from "@/app/site/[id]/agent/AgentRunner";
  * (POST /api/agent/provision returns a siteId, not a crawlId, so this route exists
  * to start an agent run without requiring a prior crawl).
  *
- * Renders the existing AgentRunner unchanged. AgentRunner's `crawlId` prop is only
- * used for its "Back to dashboard" link, so we resolve the site's most recent crawl
- * for it; when the site has never been crawled we fall back to the siteId, which
- * lands the back link on the dashboard's graceful "Crawl not found" state.
+ * Renders the existing AgentRunner unchanged. AgentRunner's `crawlId` prop is used
+ * to build the run-report links (/site/<crawlId>/agent/report/<runId>), so we resolve
+ * the site's most recent crawl for it; when the site has never been crawled we fall
+ * back to the siteId (the report route accepts either as its [id] segment).
  */
 export default async function AgentBySitePage({
   params,

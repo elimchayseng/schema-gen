@@ -1,8 +1,6 @@
 /**
- * Shared page processing pipeline.
- *
- * Extracted from /api/optimize to be reused by both single-page optimize
- * and site-wide crawl batch processing.
+ * Shared page processing pipeline. The agent's per-page perceive/fix primitive
+ * (used by lib/agent/executor and run), covering both scan and fix modes.
  *
  * Two modes:
  * - "scan": extract → validate → fix. No LLM calls. Fast (~3-6s per page).

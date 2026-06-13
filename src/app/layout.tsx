@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import Navbar from "@/components/Navbar";
 import AuthProvider from "@/components/AuthProvider";
-import { ScanProvider } from "@/components/ScanProvider";
 import "./globals.css";
 
 const instrumentSerif = Instrument_Serif({
@@ -41,10 +40,8 @@ export default function RootLayout({
         className={`${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans min-h-screen bg-surface-0 text-text-primary antialiased`}
       >
         <AuthProvider>
-          <ScanProvider>
-            <Navbar />
-            <main className="mx-auto max-w-6xl px-5 py-6">{children}</main>
-          </ScanProvider>
+          <Navbar />
+          <main className="mx-auto max-w-6xl px-5 py-6">{children}</main>
         </AuthProvider>
       </body>
     </html>

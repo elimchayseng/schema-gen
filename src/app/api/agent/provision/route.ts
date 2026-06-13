@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // Normalize to a bare domain — same normalization as POST /api/crawl.
+  // Normalize to a bare domain.
   const normalizedDomain = body.url
     .trim()
     .replace(/^https?:\/\//, "")

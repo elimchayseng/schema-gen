@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { useScan } from "@/components/ScanProvider";
 
 function BoltIcon() {
   return (
@@ -39,8 +38,6 @@ export default function AgentHero() {
   const [storefrontPassword, setStorefrontPassword] = useState("");
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const { startScan, step } = useScan();
-  const scanBusy = step !== "idle" && step !== "done" && step !== "error";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -87,17 +84,6 @@ export default function AgentHero() {
       setError("Failed to connect. Please try again.");
       setBusy(false);
     }
-  }
-
-  // Secondary path: the existing single-page scan flow, kept reachable but quiet.
-  function handleSinglePage() {
-    if (!url.trim() || scanBusy || busy) return;
-    if (!authLoading && !user) {
-      router.push("/login");
-      return;
-    }
-    router.push("/report");
-    startScan(url.trim());
   }
 
   return (
@@ -221,18 +207,6 @@ export default function AgentHero() {
           {error}
         </div>
       )}
-
-      <p className="mt-4 text-xs text-text-muted">
-        Prefer a one-off check?{" "}
-        <button
-          type="button"
-          onClick={handleSinglePage}
-          disabled={scanBusy || busy}
-          className="text-text-secondary underline-offset-2 transition-colors hover:text-text-primary hover:underline disabled:opacity-50"
-        >
-          {scanBusy ? "Scanning…" : "Scan a single page instead"}
-        </button>
-      </p>
     </section>
   );
 }

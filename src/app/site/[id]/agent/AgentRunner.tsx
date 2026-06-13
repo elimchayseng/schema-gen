@@ -600,8 +600,8 @@ export default function AgentRunner({
     <div className="min-h-screen bg-surface-0 px-6 py-8">
       <div className="mx-auto max-w-4xl">
         <div className="mb-8">
-          <Link href={`/site/${crawlId}`} className="text-sm text-accent hover:text-accent-bright">
-            ← Back to dashboard
+          <Link href="/" className="text-sm text-accent hover:text-accent-bright">
+            ← Back to home
           </Link>
           <h1 className="mt-4 font-serif text-3xl text-text-primary">
             Make your products Google-ready
