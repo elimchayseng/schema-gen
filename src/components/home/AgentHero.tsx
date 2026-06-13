@@ -128,7 +128,7 @@ export default function AgentHero() {
           <button
             type="submit"
             disabled={busy || !url.trim()}
-            className="flex shrink-0 items-center gap-2 rounded-md bg-fix px-6 py-3 text-sm font-bold text-white transition-all hover:bg-fix-dim disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex shrink-0 items-center gap-2 rounded-md bg-fix px-6 py-3 text-sm font-bold text-text-primary transition-all hover:bg-fix-bright disabled:cursor-not-allowed disabled:opacity-50"
           >
             <BoltIcon />
             {busy ? "Setting up…" : "Optimize my store"}
