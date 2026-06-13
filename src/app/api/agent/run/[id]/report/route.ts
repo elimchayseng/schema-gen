@@ -6,6 +6,7 @@ import {
   type AgentActionRow,
   type AgentRunRow,
 } from "@/lib/agent/report";
+import { fetchAllRows } from "@/lib/agent/audit";
 
 /**
  * GET /api/agent/run/[id]/report — the merchant-readable report for one run
@@ -69,15 +70,18 @@ export async function GET(
   if (!run) {
     return NextResponse.json({ error: "Run not found" }, { status: 404 });
   }
-  const { data: actions } = await admin
-    .from("agent_actions")
-    .select("*")
-    .eq("run_id", id)
-    .order("created_at", { ascending: true });
-
-  const report = buildMerchantReport(
-    run as AgentRunRow,
-    (actions ?? []) as AgentActionRow[]
+  // Page past PostgREST's 1000-row cap (issue #35): a full-catalog run produces
+  // far more than 1000 action rows, and a bare select would silently truncate the
+  // report (dropping pages, mis-stating the verdict).
+  const actions = await fetchAllRows<AgentActionRow>((from, to) =>
+    admin
+      .from("agent_actions")
+      .select("*")
+      .eq("run_id", id)
+      .order("created_at", { ascending: true })
+      .range(from, to)
   );
+
+  const report = buildMerchantReport(run as AgentRunRow, actions);
   return NextResponse.json(report);
 }

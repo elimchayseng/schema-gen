@@ -24,6 +24,8 @@ const h = vi.hoisted(() => {
         select() {
           const builder = {
             eq: () => builder,
+            order: () => builder,
+            range: () => builder, // fetchAllRows paging (issue #35)
             then: (resolve: (v: unknown) => void) =>
               resolve({ data: state.committed, error: null }),
           };
