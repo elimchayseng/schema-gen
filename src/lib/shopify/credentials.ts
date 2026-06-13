@@ -19,9 +19,18 @@
  * Secrets are never logged: log lines carry the shop + source only.
  */
 import { createAdminClient } from "@/lib/supabase";
+import { decryptSecret, encryptSecret } from "@/lib/crypto/secrets";
 import { normalizeShop } from "./config";
 import { shopifyLog } from "./logger";
 import type { ShopContext } from "./types";
+
+/** Thrown when an upsert would overwrite a row owned by a different user (#32). */
+export class CredentialOwnershipError extends Error {
+  constructor(shop: string) {
+    super(`Shop ${shop} is already connected by another account`);
+    this.name = "CredentialOwnershipError";
+  }
+}
 
 export interface ResolvedShopCredentials {
   /** Normalized shop host, e.g. "garnerandtow.myshopify.com". */
@@ -89,8 +98,10 @@ export async function resolveShopCredentials(
     return {
       shop,
       appKey: row.app_key,
-      appSecret: row.app_secret,
-      storefrontPassword: row.storefront_password ?? null,
+      // Secrets are stored encrypted at rest (#32); decrypt on read. Legacy
+      // plaintext rows are returned unchanged by decryptSecret.
+      appSecret: decryptSecret(row.app_secret) ?? row.app_secret,
+      storefrontPassword: decryptSecret(row.storefront_password),
       source: "supabase",
     };
   }
@@ -156,23 +167,59 @@ export interface UpsertShopCredentialsInput {
   appSecret: string;
   /** Optional; pass null to clear an existing password. */
   storefrontPassword?: string | null;
+  /**
+   * The authenticated user provisioning this shop (#32). When provided, the
+   * row is owned by this user and a different owner is refused. When omitted
+   * (internal/dev callers), ownership is left untouched — but a row already
+   * owned by someone else is still refused so a null caller can't hijack.
+   */
+  ownerId?: string;
 }
 
 /**
  * Provision (or rotate) per-shop credentials. Service-role write; the table
  * has no anon policies, so this is server-only by construction.
+ *
+ * Ownership (#32): identity is effectively (owner_id, shop_domain). We refuse to
+ * overwrite a row owned by a different user (confused-deputy / credential
+ * clobbering). A legacy null-owner row is claimed by the first caller that
+ * supplies an ownerId. Secrets are encrypted at rest before the write.
  */
 export async function upsertShopCredentials(
   input: UpsertShopCredentialsInput
 ): Promise<void> {
   const shop = normalizeShop(input.shopDomain);
   const supabase = createAdminClient();
+
+  // Ownership guard: read the current owner before writing. A row owned by a
+  // different user is never overwritten — neither by another user nor by an
+  // ownerless internal caller.
+  const { data: existing, error: ownerErr } = await supabase
+    .from("shopify_credentials")
+    .select("owner_id")
+    .eq("shop_domain", shop)
+    .maybeSingle();
+  if (ownerErr) {
+    throw new Error(
+      `Failed to read shopify_credentials owner for ${shop}: ${ownerErr.message}`
+    );
+  }
+  const currentOwner = (existing as { owner_id: string | null } | null)?.owner_id ?? null;
+  if (currentOwner && currentOwner !== input.ownerId) {
+    throw new CredentialOwnershipError(shop);
+  }
+
+  // Preserve an existing owner when the caller doesn't supply one (rotation by
+  // an internal path shouldn't blank the owner); otherwise claim for ownerId.
+  const ownerId = input.ownerId ?? currentOwner;
+
   const { error } = await supabase.from("shopify_credentials").upsert(
     {
       shop_domain: shop,
       app_key: input.appKey,
-      app_secret: input.appSecret,
-      storefront_password: input.storefrontPassword ?? null,
+      app_secret: encryptSecret(input.appSecret),
+      storefront_password: encryptSecret(input.storefrontPassword ?? null),
+      owner_id: ownerId,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "shop_domain" }

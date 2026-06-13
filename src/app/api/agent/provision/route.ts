@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { createAdminClient } from "@/lib/supabase";
-import { upsertShopCredentials } from "@/lib/shopify/credentials";
+import {
+  CredentialOwnershipError,
+  upsertShopCredentials,
+} from "@/lib/shopify/credentials";
 import type { Goal } from "@/lib/agent/types";
 
 /**
@@ -113,12 +116,15 @@ export async function POST(request: Request) {
       );
     }
     try {
-      // Ownership was just proven by the user-scoped upsert above; the credential
-      // store and shop_domain tag are service-role writes (RLS keeps them server-only).
+      // The credential row is owned by this user (#32): a different account can't
+      // overwrite it (confused-deputy / clobbering). Secrets are encrypted at
+      // rest by upsertShopCredentials. Service-role writes keep the table
+      // server-only (RLS, no anon policies).
       await upsertShopCredentials({
         shopDomain,
         appKey: body.appKey!.trim(),
         appSecret: body.appSecret!.trim(),
+        ownerId: user.id,
         ...(body.storefrontPassword?.trim()
           ? { storefrontPassword: body.storefrontPassword.trim() }
           : {}),
@@ -131,6 +137,18 @@ export async function POST(request: Request) {
       if (shopErr) throw new Error(shopErr.message);
       shopConnected = true;
     } catch (e) {
+      if (e instanceof CredentialOwnershipError) {
+        // Another account already connected this myshopify domain. 409, not 500
+        // — it's a conflict the caller can act on, and we don't leak who owns it.
+        return NextResponse.json(
+          {
+            error:
+              "This Shopify store is already connected by another account. " +
+              "Contact support if you believe this is your store.",
+          },
+          { status: 409 }
+        );
+      }
       console.error("[agent/provision] credential store failed:", e);
       return NextResponse.json(
         { error: "Failed to store Shopify credentials" },
