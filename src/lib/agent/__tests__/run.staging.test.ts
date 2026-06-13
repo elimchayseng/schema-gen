@@ -16,6 +16,8 @@ const h = vi.hoisted(() => {
       domain: string;
       shop_domain: string | null;
     },
+    // Rows returned to loadCommittedUrls (resume). Empty by default.
+    committed: [] as { url: string }[],
   };
   const client = {
     from() {
@@ -30,7 +32,8 @@ const h = vi.hoisted(() => {
           const builder = {
             eq: () => builder,
             single: async () => ({ data: state.site, error: null }),
-            then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+            then: (resolve: (v: unknown) => void) =>
+              resolve({ data: state.committed, error: null }),
           };
           return builder;
         },
@@ -160,6 +163,7 @@ const PREVIEW = `https://shop.myshopify.com/?preview_theme_id=${STAGING_ID}`;
 beforeEach(() => {
   vi.clearAllMocks();
   h.state.site = { domain: "shop.com", shop_domain: "shop.myshopify.com" };
+  h.state.committed = [];
   credsMock.resolveShopContext.mockResolvedValue({
     shop: "shop.myshopify.com",
     storefrontPassword: null,
@@ -349,6 +353,58 @@ describe("runGoal staging write strategy (issue #26)", () => {
     expect(rb?.outcome).toContain(String(SOURCE_ID));
     // The failing staging theme is evidence — never deleted.
     expect(themesMock.themeDelete).not.toHaveBeenCalled();
+  });
+
+  it("resume does NOT trust a staging l4_pass: a 'committed' page is still re-processed (#33)", async () => {
+    // A prior slice of this run recorded l4_pass for P1 — but in staging mode that
+    // passed against the STAGING theme's preview, not the live store. If that run
+    // never published, P1 isn't live; resume must re-process it, not skip it.
+    h.state.committed = [{ url: P1 }];
+
+    await runGoal(goal, {
+      dryRun: false,
+      persistAudit: true, // → runId set → resume lookup runs
+      writeTheme: { mode: "staging", publish: true },
+    });
+
+    // P1 is re-scanned, not skipped (env-only resume-skip).
+    const scannedP1 = mockProcess.mock.calls.some(
+      (c) => c[0] === P1 && c[1] === "scan"
+    );
+    expect(scannedP1).toBe(true);
+  });
+
+  it("post-publish FAILED but the live theme changed since our publish: republish is SKIPPED (#33)", async () => {
+    postPublishMock.fn.mockResolvedValue({
+      status: "failed",
+      pages: [{ url: P1, status: "fail", detail: "duplicate schema", attempts: 1 }],
+    });
+    // Between our swap and the post-publish check, someone published a DIFFERENT
+    // theme — so the current live theme is no longer our staging theme.
+    const OTHER_LIVE = 999;
+    themesMock.themesList.mockResolvedValue([
+      { id: OTHER_LIVE, role: "main", name: "Someone else's theme" },
+    ]);
+
+    const result = await runGoal(goal, {
+      dryRun: false,
+      persistAudit: false,
+      writeTheme: { mode: "staging", publish: true },
+    });
+
+    // Only the original swap published; we must NOT republish the stale source
+    // (that would demote the newer live theme OTHER_LIVE).
+    expect(themesMock.themePublish).toHaveBeenCalledTimes(1);
+    expect(themesMock.themePublish.mock.calls[0][0]).toBe(STAGING_ID);
+    expect(themesMock.themePublish).not.toHaveBeenCalledWith(SOURCE_ID, expect.anything());
+
+    const skipped = result.actions.find(
+      (a) =>
+        a.action === "merchant_action" &&
+        a.outcome.startsWith("post_publish_rollback_skipped:live_theme_changed:")
+    );
+    expect(skipped?.outcome).toContain(String(OTHER_LIVE));
+    expect(result.staging?.postPublish?.rolledBack).toBe(false);
   });
 
   it("post-publish FAILED and the republish also fails: paged, merchant told which theme to publish", async () => {

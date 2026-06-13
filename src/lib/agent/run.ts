@@ -29,6 +29,7 @@ import {
   makeSourceLocatorOps,
   type SourceLocatorOps,
 } from "@/lib/shopify/source-locator";
+import { findJsonLdScriptRanges } from "@/lib/shopify/suppress";
 import type { ShopContext } from "@/lib/shopify/types";
 import type { ExtractedJsonLd } from "@/lib/url-validator/types";
 import { planTasks } from "./planner";
@@ -417,13 +418,25 @@ const QUOTED_LITERAL_RE = /"(?:[^"\\\n]|\\.)*"/g;
  * needle is the LONGEST quoted literal of the rendered block (quotes included —
  * `"https://schema.org/InStock"` style) that ALSO appears verbatim in the asset's
  * text; a long shared literal is near-conclusive and stable across re-renders.
- * When the asset text is unavailable, fall back to the longest literal outright —
- * if it turns out not to match, suppressJsonLdEmission fails closed and apply.ts
- * records a not_suppressible merchant_action instead of touching the asset.
- * Ties break on first occurrence (Array.prototype.sort is stable). Returns
- * undefined only when the block has no usable quoted literal at all.
+ *
+ * UNIQUENESS (issue #34): `suppressJsonLdEmission({match:{contains}})` wraps EVERY
+ * JSON-LD script element whose text contains the needle. A literal shared across
+ * sibling blocks (canonical store URL, repeated brand string, a shared `@id`
+ * base) would therefore collaterally silence legitimate structured data the
+ * merchant wanted — and the L4 `unique` gate only checks REQUIRED types, so it
+ * can't catch a silenced Organization/FAQ block. So when we can see the asset's
+ * script elements, the needle MUST identify EXACTLY ONE of them. If no literal is
+ * unique to a single block, return undefined and let the caller record a
+ * not_suppressible merchant_action — refusing to suppress beats over-suppressing.
+ *
+ * When the asset text is unavailable (or it has no static <script> elements — a
+ * pure render-time emission), fall back to the longest literal present; if it
+ * turns out not to match, suppressJsonLdEmission fails closed and apply.ts records
+ * a not_suppressible merchant_action instead of touching the asset. Ties break on
+ * first occurrence (Array.prototype.sort is stable). Returns undefined when the
+ * block has no usable quoted literal at all.
  */
-function pickContainsLiteral(
+export function pickContainsLiteral(
   raw: string,
   assetText: string | null
 ): string | undefined {
@@ -432,6 +445,17 @@ function pickContainsLiteral(
   );
   literals.sort((a, b) => b.length - a.length);
   if (assetText) {
+    const ranges = findJsonLdScriptRanges(assetText);
+    if (ranges.length > 0) {
+      // The needle must appear in exactly one JSON-LD script element — that is
+      // precisely the set suppressJsonLdEmission would wrap. A literal in two or
+      // more siblings is rejected here, so the suppression is never planned.
+      return literals.find(
+        (l) => ranges.filter((r) => r.text.includes(l)).length === 1
+      );
+    }
+    // No static JSON-LD <script> in the asset (render-time emission): the
+    // per-block uniqueness check doesn't apply; use the longest in-asset literal.
     const inAsset = literals.find((l) => assetText.includes(l));
     if (inAsset) return inAsset;
   }
@@ -728,8 +752,16 @@ export async function runGoal(
     // Idempotent resume (Phase 5): drop pages this run already committed live (an
     // l4_pass verify row). A resumed run never re-processes them; a fresh run has none,
     // so this is inert. Best-effort — loadCommittedUrls degrades to empty on any error.
+    //
+    // Issue #33: ONLY env mode writes the live theme directly, so an l4_pass there
+    // means the schema is genuinely live and safe to skip. In staging modes L4
+    // passed against the STAGING theme's preview render — if that run rolled back,
+    // was killed before publish, or the staging theme was later deleted, the schema
+    // never went live. Trusting those l4_pass rows would permanently skip pages that
+    // were never actually committed, so resume-skip is disabled outside env mode
+    // (the live commit point there is the publish step, re-verified each run).
     const committedSkipped: string[] = [];
-    if (resume && runId) {
+    if (resume && runId && writeTheme.mode === "env") {
       const committed = await loadCommittedUrls(runId);
       if (committed.size > 0) {
         for (const u of urls) {
@@ -1115,7 +1147,41 @@ export async function runGoal(
               if (pp.status === "failed") {
                 // Definite bad published render — undo the swap. The staging theme
                 // is kept (unpublished) as the evidence of what failed.
+                //
+                // Issue #33: republishing sourceThemeId blindly is unsafe. We
+                // captured sourceThemeId at stage-prepare time; if the merchant (or
+                // another run) published a DIFFERENT theme between our publish and
+                // now, the live theme is no longer ours to undo — republishing the
+                // stale source would DEMOTE that newer live theme. So only auto-
+                // rollback while OUR staging theme is still the published one;
+                // otherwise our publish was already superseded — leave the current
+                // live theme alone and surface a merchant action with the facts.
+                let liveThemeId: number | null = null;
                 try {
+                  const themesNow = await themesList(shopCtx ?? undefined);
+                  liveThemeId = themesNow.find((t) => t.role === "main")?.id ?? null;
+                } catch (e) {
+                  warn("could not confirm the live theme before post-publish rollback", e);
+                }
+                if (liveThemeId !== null && liveThemeId !== staging.stagingThemeId) {
+                  // Someone published a different theme after us — don't touch it.
+                  staging.postPublish.rolledBack = false;
+                  await record({
+                    url: applyItems[0]?.url ?? "",
+                    action: "merchant_action",
+                    schemaBefore: null,
+                    schemaAfter: null,
+                    gates: null,
+                    outcome: `post_publish_rollback_skipped:live_theme_changed:current:${liveThemeId}:expected:${staging.stagingThemeId}`,
+                    writeTarget: String(liveThemeId),
+                  });
+                  emit({
+                    phase: "publish",
+                    runId,
+                    message: `post-publish render failed, but theme ${liveThemeId} was published since — leaving it untouched (manual review needed)`,
+                  });
+                } else {
+                  try {
                   await themePublish(staging.sourceThemeId, shopCtx ?? undefined);
                   staging.published = false;
                   staging.postPublish.rolledBack = true;
@@ -1142,6 +1208,7 @@ export async function runGoal(
                     outcome: `post_publish_rollback_failed:republish_theme:${staging.sourceThemeId}:${e instanceof Error ? e.message : String(e)}`,
                     writeTarget: String(staging.sourceThemeId),
                   });
+                  }
                 }
               }
               emit({
