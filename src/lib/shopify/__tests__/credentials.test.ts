@@ -172,7 +172,14 @@ describe("resolveShopContext", () => {
 });
 
 describe("upsertShopCredentials", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The owner-guard pre-read (#32) selects owner_id before writing. Default to
+    // "no existing row" unless a test overrides it.
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+  });
+  // No CREDENTIAL_ENCRYPTION_KEY in the test env, so encryptSecret is a
+  // passthrough and stored secret values equal the plaintext (asserted below).
 
   it("normalizes the shop and upserts on shop_domain", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -183,6 +190,7 @@ describe("upsertShopCredentials", () => {
       appKey: "new-key",
       appSecret: "new-secret",
       storefrontPassword: "new-pass",
+      ownerId: "user-1",
     });
 
     expect(h.from).toHaveBeenCalledWith("shopify_credentials");
@@ -192,6 +200,7 @@ describe("upsertShopCredentials", () => {
       app_key: "new-key",
       app_secret: "new-secret",
       storefront_password: "new-pass",
+      owner_id: "user-1",
     });
     expect(typeof payload.updated_at).toBe("string");
     expect(opts).toEqual({ onConflict: "shop_domain" });
@@ -218,5 +227,49 @@ describe("upsertShopCredentials", () => {
     await expect(
       upsertShopCredentials({ shopDomain: "x", appKey: "k", appSecret: "s" })
     ).rejects.toThrow(/Failed to upsert shopify_credentials/);
+  });
+
+  it("claims a legacy null-owner row for the calling user", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { owner_id: null }, error: null });
+    h.upsert.mockResolvedValue({ error: null });
+    await upsertShopCredentials({
+      shopDomain: "garnerandtow",
+      appKey: "k",
+      appSecret: "s",
+      ownerId: "user-1",
+    });
+    expect(h.upsert.mock.calls[0][0].owner_id).toBe("user-1");
+  });
+
+  it("refuses to overwrite a row owned by a different user", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { owner_id: "user-1" }, error: null });
+    await expect(
+      upsertShopCredentials({
+        shopDomain: "garnerandtow",
+        appKey: "k",
+        appSecret: "s",
+        ownerId: "user-2",
+      })
+    ).rejects.toThrow(/already connected by another account/);
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses an ownerless internal caller against an owned row", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { owner_id: "user-1" }, error: null });
+    await expect(
+      upsertShopCredentials({ shopDomain: "garnerandtow", appKey: "k", appSecret: "s" })
+    ).rejects.toThrow(/already connected by another account/);
+  });
+
+  it("lets the same owner rotate their own credentials", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { owner_id: "user-1" }, error: null });
+    h.upsert.mockResolvedValue({ error: null });
+    await upsertShopCredentials({
+      shopDomain: "garnerandtow",
+      appKey: "k2",
+      appSecret: "s2",
+      ownerId: "user-1",
+    });
+    expect(h.upsert.mock.calls[0][0].owner_id).toBe("user-1");
   });
 });

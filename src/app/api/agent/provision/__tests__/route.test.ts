@@ -31,7 +31,16 @@ function mockAuthed(opts: { user?: { id: string } | null; siteResult?: unknown }
 vi.mock("@/lib/supabase-server", () => ({ createSupabaseServerClient: vi.fn() }));
 const adminMock = vi.hoisted(() => ({ createAdminClient: vi.fn() }));
 vi.mock("@/lib/supabase", () => adminMock);
-const credentialsMock = vi.hoisted(() => ({ upsertShopCredentials: vi.fn() }));
+const credentialsMock = vi.hoisted(() => {
+  // Re-declare the real error class so `instanceof` in the route works under mock.
+  class CredentialOwnershipError extends Error {
+    constructor(shop: string) {
+      super(`Shop ${shop} is already connected by another account`);
+      this.name = "CredentialOwnershipError";
+    }
+  }
+  return { upsertShopCredentials: vi.fn(), CredentialOwnershipError };
+});
 vi.mock("@/lib/shopify/credentials", () => credentialsMock);
 
 import { createSupabaseServerClient } from "@/lib/supabase-server";
@@ -122,6 +131,19 @@ describe("POST /api/agent/provision", () => {
     expect(text).not.toContain("sites_pkey");
   });
 
+  it("409 when the shop is already connected by another account (#32)", async () => {
+    mockAuthedClient.mockResolvedValue(mockAuthed({}) as never);
+    credentialsMock.upsertShopCredentials.mockRejectedValue(
+      new credentialsMock.CredentialOwnershipError(SECRETS.shopDomain)
+    );
+    const res = await POST(req({ url: "https://garnerandtow.com", ...SECRETS }));
+    expect(res.status).toBe(409);
+    const text = JSON.stringify(await res.json());
+    expect(text).toContain("already connected by another account");
+    // Don't leak which account owns it.
+    expect(text).not.toContain("user-");
+  });
+
   it("500 with a GENERIC error when upsertShopCredentials throws (no detail leaked)", async () => {
     mockAuthedClient.mockResolvedValue(mockAuthed({}) as never);
     credentialsMock.upsertShopCredentials.mockRejectedValue(
@@ -155,6 +177,8 @@ describe("POST /api/agent/provision", () => {
       appKey: SECRETS.appKey,
       appSecret: SECRETS.appSecret,
       storefrontPassword: SECRETS.storefrontPassword,
+      // The row is owned by the authenticated user (#32).
+      ownerId: "user-1",
     });
     // The response contract: secrets are stored server-side, never echoed back.
     const text = JSON.stringify(data);
